@@ -1,9 +1,12 @@
 # AIGC Thesis Toolkit
 
+AIGC Thesis Toolkit 是一个本地运行的 AI 论文写作工作流。
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 ![AIGC Thesis Toolkit WebUI](image.png)
 
-AIGC Thesis Toolkit 是一个本地运行的 AI 论文写作工作流。它可以把你放入 `user_data/` 的参考资料、学校格式要求、开题/中期报告、参考论文、仿真或实验数据等内容，整理成可追踪的资料索引，并辅助生成论文大纲、小节正文、完整 Markdown 和 Word 文档。
-
+它可以把你放入 `user_data/` 的参考资料、学校格式要求、开题/中期报告、参考论文、仿真或实验数据等内容，整理成可追踪的资料索引，并辅助生成论文大纲、小节正文、完整 Markdown 和 Word 文档。
 这个项目的目标不是“一键交作业”，而是提供一个更稳定、更可控、更容易续写的 AIGC 论文工作台：你提供真实资料和格式要求，系统按小节串行生成内容，并保留中间文件、状态和预览，方便你检查、修改和导出。
 
 ## 功能亮点
@@ -180,29 +183,25 @@ thesis/logs/
 ## 项目结构
 
 ```text
-configs/
-  default.yaml              公共默认配置
-  local.example.yaml        私有配置示例
-
-template/
-  reference.docx            Word 样式模板
-
-thesis/
-  style.md                  写作与格式规范
-  sections/                 生成的小节 Markdown
-  logs/                     运行日志
-
-user_data/
-  README.md                 个人资料目录占位说明
-
-workflows/
-  write/                    资料、规范、大纲、小节生成
-  export_docx/              Markdown 到 Word 的导出流程
-  review/                   质量检查与审阅流程
-  webui/                    本地 WebUI
-
-output/
-  .gitkeep                  输出目录占位，生成物默认忽略
+aigc-thesis-toolkit/
+├── workflow.py                      # CLI 主入口
+├── configs/
+│   └── default.yaml                 # 默认配置（引擎权重、API、阈值）
+│   └── local.example.yaml           # 私有配置示例
+├── template/
+│   └── reference.docx               # Word 样式模板
+├── thesis/                          
+│   ├── style.md                     # 写作与格式规范
+│   ├── sections/                    # 生成的小节 Markdown
+│   └── logs/                        # 运行日志
+├── user_data/                       # 输出报告（终端/txt/json/html）
+│   └── hc3/                         # 个人资料目录占位说明
+├── workflows/
+│   ├── write/                       # 资料、规范、大纲、小节生成
+│   ├── fengci/                      # Markdown 到 Word 的导出流程
+│   ├── fengci/                      # 质量检查与审阅流程
+│   └── hc3/                         # 本地 WebUI
+└── output/                          # 输出数据（git 忽略）
 ```
 
 ## 隐私与安全
@@ -214,22 +213,6 @@ output/
 - AI 生成内容必须人工核查，尤其是数据、公式、引用、实验结论和学校格式要求。
 
 ## 上传 GitHub 前检查
-
-通常应该提交：
-
-```text
-README.md
-requirements.txt
-workflow.py
-configs/default.yaml
-configs/local.example.yaml
-workflows/
-template/
-thesis/README.md
-thesis/style.md
-user_data/README.md
-.gitignore
-```
 
 应该留在本地：
 
@@ -251,6 +234,6 @@ output/
 
 如果后续要做更复杂的交互，比如拖拽式文件管理、富文本预览、可视化章节编辑器、多页面路由等，可以再引入 Vite/React 或其他前端工具链。届时 README 会补充 Node.js/npm 的安装和构建步骤。
 
-## License
+## 许可证
 
-见 [LICENSE](LICENSE)。
+MIT License
