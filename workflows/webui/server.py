@@ -7,6 +7,7 @@ import html
 import errno
 import json
 import mimetypes
+import posixpath
 import subprocess
 import sys
 import threading
@@ -14,7 +15,7 @@ import time
 import yaml
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 
 WORK = Path(__file__).resolve().parents[2]
@@ -28,6 +29,7 @@ LOCAL_CONFIG_FILE = WORK / "configs" / "local.yaml"
 STYLE_FILE = WORK / "thesis" / "style.md"
 USER_DATA_DIR = WORK / "user_data"
 PHOTO_DIR = WORK / "workflows" / "webui" / "photo"
+FRONTEND_DIST = WORK / "workflows" / "webui" / "frontend" / "dist"
 PREVIEW_LIMIT = 60000
 USER_FILE_PREVIEW_LIMIT = 20
 
@@ -195,6 +197,26 @@ def update_settings(values):
     save_local_config(config)
 
 
+def update_settings_json(values):
+    config = load_config()
+    project = config.setdefault("project", {})
+    generation = config.setdefault("engines", {}).setdefault("generation", {})
+    providers = generation.setdefault("providers", {})
+    provider = providers.setdefault("writer", {})
+    batch = generation.setdefault("batch", {})
+
+    project["title"] = str(values.get("title", "")).strip()
+    provider["api_base"] = str(values.get("api_base", "")).strip()
+    provider["api_key"] = str(values.get("api_key", "")).strip()
+    provider["model"] = str(values.get("model", "")).strip()
+    granularity = str(values.get("granularity", "chapter"))
+    generation["granularity"] = granularity if granularity in {"chapter", "subsection"} else "chapter"
+    batch["sleep_seconds"] = as_number(values.get("sleep_seconds", 3), float, 3)
+    batch["request_timeout_seconds"] = as_number(values.get("request_timeout_seconds", 300), int, 300)
+    batch["max_sections_per_run"] = as_number(values.get("max_sections_per_run", 0), int, 0)
+    save_local_config(config)
+
+
 def as_number(value, caster, default):
     try:
         return caster(value)
@@ -205,6 +227,11 @@ def as_number(value, caster, default):
 def update_style(values):
     STYLE_FILE.parent.mkdir(parents=True, exist_ok=True)
     STYLE_FILE.write_text(values.get("style", [""])[0], encoding="utf-8")
+
+
+def update_style_text(text):
+    STYLE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STYLE_FILE.write_text(text, encoding="utf-8")
 
 
 def save_style_upload(content_type, body):
@@ -671,9 +698,15 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/status":
             self.send_json(status_payload())
             return
+        if parsed.path == "/api/status":
+            self.send_json(status_payload())
+            return
         if parsed.path.startswith("/photo/"):
             self.send_file(PHOTO_DIR / Path(parsed.path).name)
             return
+        if parsed.path.startswith("/assets/") or parsed.path in {"/", "/index.html"}:
+            if self.try_send_frontend(parsed.path):
+                return
         notice = parse_qs(parsed.query).get("notice", [""])[0]
         self.send_html(render_page(notice=notice))
 
@@ -681,6 +714,9 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         raw_body = self.rfile.read(length)
         parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/"):
+            self.handle_api_post(parsed.path, raw_body)
+            return
         notice = ""
         if parsed.path == "/upload":
             notice = save_upload(self.headers.get("Content-Type", ""), raw_body)["message"]
@@ -717,6 +753,52 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Location", f"/?notice={quote(notice)}")
         self.end_headers()
 
+    def handle_api_post(self, path, raw_body):
+        notice = ""
+        if path == "/api/upload":
+            result = save_upload(self.headers.get("Content-Type", ""), raw_body)
+            self.send_json({"ok": result["saved"] > 0, **result})
+            return
+        if path == "/api/style-upload":
+            result = save_style_upload(self.headers.get("Content-Type", ""), raw_body)
+            self.send_json({"ok": result["saved"], **result})
+            return
+
+        try:
+            payload = json.loads(raw_body.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            self.send_json({"ok": False, "message": "请求 JSON 格式错误。"}, status=400)
+            return
+
+        if path == "/api/settings":
+            update_settings_json(payload)
+            self.send_json({"ok": True, "message": "配置已保存。", "status": status_payload()})
+            return
+        if path == "/api/style":
+            update_style_text(str(payload.get("style", "")))
+            self.send_json({"ok": True, "message": "写作规范已保存。", "status": status_payload()})
+            return
+        if path == "/api/action":
+            cmd = str(payload.get("cmd", ""))
+            if cmd == "pause":
+                set_pause(True)
+                notice = "已请求暂停：当前写作单元完成后会停在下一个写作单元之前。"
+            elif cmd == "resume":
+                set_pause(False)
+                notice = "已恢复生成。"
+            elif cmd == "shutdown":
+                self.send_json({"ok": True, "message": "WebUI 已关闭。"})
+                threading.Thread(target=self.server.shutdown, daemon=True).start()
+                return
+            else:
+                ok, notice = run_command(cmd)
+                self.send_json({"ok": ok, "message": notice, "status": status_payload()})
+                return
+            self.send_json({"ok": True, "message": notice, "status": status_payload()})
+            return
+
+        self.send_json({"ok": False, "message": "未知 API。"}, status=404)
+
     def send_html(self, content):
         data = content.encode("utf-8")
         self.send_response(200)
@@ -725,16 +807,47 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def send_json(self, payload):
+    def send_json(self, payload, status=200):
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
 
+    def try_send_frontend(self, route):
+        if not FRONTEND_DIST.exists():
+            return False
+        path = route
+        if path in {"/", "/index.html"}:
+            target = FRONTEND_DIST / "index.html"
+        else:
+            normalized = posixpath.normpath(unquote(path)).lstrip("/")
+            target = FRONTEND_DIST / normalized
+        try:
+            target.resolve().relative_to(FRONTEND_DIST.resolve())
+        except ValueError:
+            self.send_error(404)
+            return True
+        if target.exists() and target.is_file():
+            self._send_file(target, FRONTEND_DIST)
+            return True
+        index = FRONTEND_DIST / "index.html"
+        if index.exists():
+            self._send_file(index, FRONTEND_DIST)
+            return True
+        return False
+
     def send_file(self, path):
-        if not path.exists() or not path.is_file() or path.parent != PHOTO_DIR:
+        self._send_file(path, PHOTO_DIR)
+
+    def _send_file(self, path, root):
+        try:
+            path.resolve().relative_to(root.resolve())
+        except ValueError:
+            self.send_error(404)
+            return
+        if not path.exists() or not path.is_file():
             self.send_error(404)
             return
         data = path.read_bytes()

@@ -48,6 +48,20 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 
 python workflow.py init
+```
+
+安装并构建新版 WebUI：
+
+```bash
+cd workflows/webui/frontend
+npm install
+npm run build
+cd ../../..
+```
+
+启动本地服务：
+
+```bash
 python workflow.py ui
 ```
 
@@ -58,6 +72,23 @@ http://127.0.0.1:8765
 ```
 
 如果 `8765` 端口已被占用，程序会自动尝试后续端口，并在终端输出实际地址。
+
+开发 WebUI 时可以开两个终端：
+
+```bash
+# 终端 1：启动 Python 后端
+python workflow.py ui
+
+# 终端 2：启动 Vite 前端开发服务
+cd workflows/webui/frontend
+npm run dev
+```
+
+开发模式打开：
+
+```text
+http://127.0.0.1:5173
+```
 
 ## WebUI 使用方式
 
@@ -204,9 +235,9 @@ aigc-thesis-toolkit/
 │   └── hc3/                         # 个人资料目录占位说明
 ├── workflows/
 │   ├── write/                       # 资料、规范、大纲、正文生成
-│   ├── fengci/                      # Markdown 到 Word 的导出流程
-│   ├── fengci/                      # 质量检查与审阅流程
-│   └── hc3/                         # 本地 WebUI
+│   ├── export_docx/                 # Markdown 到 Word 的导出流程
+│   ├── review/                      # 质量检查与审阅流程
+│   └── webui/                       # 本地 WebUI 与 Vite 前端
 └── output/                          # 输出数据（git 忽略）
 ```
 
@@ -236,9 +267,14 @@ output/
 
 ## 是否需要 Node.js/npm
 
-当前 WebUI 使用 Python 标准库实现，不需要 Node.js 和 npm。这样安装更轻量，适合直接在 WSL 或 Linux 上运行。
+新版 WebUI 使用 Vite + React，需要 Node.js 和 npm。
 
-如果后续要做更复杂的交互，比如拖拽式文件管理、富文本预览、可视化章节编辑器、多页面路由等，可以再引入 Vite/React 或其他前端工具链。届时 README 会补充 Node.js/npm 的安装和构建步骤。
+推荐版本：
+
+- Node.js 18 或更高版本
+- npm 9 或更高版本
+
+构建后的前端文件位于 `workflows/webui/frontend/dist/`，该目录默认不提交。`python workflow.py ui` 会优先服务这个构建产物；如果还没有构建产物，会回退到旧的 Python 内置页面，方便排查环境问题。
 
 ## 许可证
 

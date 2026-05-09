@@ -22,6 +22,9 @@ __pycache__/
 *.pyc
 thesis/pause.flag
 configs/local.yaml
+node_modules/
+workflows/webui/frontend/node_modules/
+workflows/webui/frontend/dist/
 
 # Office 临时锁文件
 ~$*
