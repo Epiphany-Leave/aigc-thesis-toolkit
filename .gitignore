@@ -1,0 +1,32 @@
+# 自动生成的最终产物
+output/*
+!output/.gitkeep
+
+# thesis 是固定目录，但正文、大纲、状态都是个人生成内容
+thesis/logs/*
+!thesis/logs/.gitkeep
+thesis/sections/*
+!thesis/sections/.gitkeep
+thesis/outline.md
+thesis/state.json
+thesis/section_plan.json
+
+# 每个人自己的参考资料
+user_data/*
+!user_data/README.md
+
+# 本地运行缓存
+.venv/
+*.log
+__pycache__/
+*.pyc
+thesis/pause.flag
+configs/local.yaml
+
+# Office 临时锁文件
+~$*
+~WRL*.tmp
+
+# 根目录个人文档应移动到 user_data/
+/*.doc
+/*.pdf

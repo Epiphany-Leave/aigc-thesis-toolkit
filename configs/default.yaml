@@ -1,0 +1,83 @@
+project:
+  title: "你的论文题目"
+
+engines:
+  generation:
+    # 默认采用单主模型生成。
+    # 论文是长文本一致性任务，默认不做多引擎融合，避免风格漂移和重复内容。
+    mode: "single"
+    default: "writer"
+    providers:
+      writer:
+        # 可以直接在这里配置 OpenAI 兼容接口；留空时仍会回退读取下面的环境变量。
+        api_base: "https://api.openai.com/v1"
+        api_key: ""
+        model: "gpt-4o-mini"
+        api_base_env: "OPENAI_BASE_URL"
+        api_key_env: "OPENAI_API_KEY"
+        model_env: "OPENAI_MODEL"
+        role: "draft thesis sections"
+        weight: 1.0
+    batch:
+      # 0 表示 generate --all 会连续串行生成所有未完成小节；可用 workflow.py pause 暂停在下一个小节前。
+      max_sections_per_run: 0
+      sleep_seconds: 3
+      request_timeout_seconds: 180
+  quality_gate:
+    rule_based: true
+    run_after_assemble: true
+    fail_on_error: false
+    llm_review_on_failure: false
+    report: output/quality_gate_report.md
+    max_findings_per_rule: 20
+    checks:
+      hardcoded_refs: true
+      placeholders: true
+      heading_levels: true
+      equation_numbering: false
+
+paths:
+  thesis_dir: thesis
+  sections_dir: thesis/sections
+  output_dir: output
+  template_docx: template/reference.docx
+  user_data_dir: user_data
+
+assembly:
+  output_markdown: output/thesis.md
+  # auto 表示从 thesis/section_plan.json 读取章节顺序。
+  # section_plan.json 由 thesis/outline.md 自动生成。
+  section_order: auto
+  plan_file: thesis/section_plan.json
+
+export_docx:
+  input_markdown: output/thesis.md
+  output_docx: output/thesis.docx
+  fallback_docx: output/thesis_latest.docx
+  toc_depth: 3
+
+review:
+  input_markdown: output/thesis.md
+  prompt: workflows/review/review_prompt.md
+  output_report: output/review_results.md
+  mode: "multi_dimension"
+  aggregation: "weighted_score"
+  threshold:
+    pass_score: 0.85
+    needs_revision_score: 0.70
+  dimensions:
+    structure:
+      weight: 0.20
+      prompt: "检查章节层级、完整性和逻辑连贯性。"
+    formatting:
+      weight: 0.20
+      prompt: "检查 DOCX/Markdown 格式约束和模板符合度。"
+    cross_reference:
+      weight: 0.20
+      prompt: "检查公式、图、表和文献交叉引用。"
+    academic_style:
+      weight: 0.20
+      prompt: "检查学术表达、重复表述、AI 痕迹和上下文一致性。"
+    evidence_and_data:
+      weight: 0.20
+      prompt: "检查论断是否由参数、数据、图片或参考文献支撑。"
