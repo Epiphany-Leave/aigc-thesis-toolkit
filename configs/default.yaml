@@ -66,6 +66,9 @@ review:
   input_markdown: output/thesis.md
   prompt: workflows/review/review_prompt.md
   output_report: output/review_results.md
+  max_chars_per_request: 12000
+  sleep_seconds: 2
+  request_timeout_seconds: 240
   mode: "multi_dimension"
   aggregation: "weighted_score"
   threshold:

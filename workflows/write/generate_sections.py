@@ -5,6 +5,7 @@ import argparse
 import datetime
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -41,6 +42,46 @@ def read_text(path):
 
 def write_json(path, data):
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def count_cjk_words(text):
+    cjk = re.findall(r"[\u4e00-\u9fff]", text)
+    latin_words = re.findall(r"[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*", text)
+    return len(cjk) + len(latin_words)
+
+
+def write_generation_log(config, section, content):
+    thesis_dir = WORK / config.get("paths", {}).get("thesis_dir", "thesis")
+    log_dir = thesis_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    safe_id = re.sub(r"[^0-9A-Za-z_\-\u4e00-\u9fff]+", "_", section.get("id", "section"))
+    path = log_dir / f"reflection_{datetime.datetime.now():%Y%m%d_%H%M%S}_{safe_id}.md"
+    has_bold = "**" in content or "__" in content
+    has_ordered_list = bool(re.search(r"(?m)^\s*\d+[.、]\s+", content))
+    word_count = count_cjk_words(content)
+    path.write_text(
+        "\n".join(
+            [
+                "# 生成反思日志",
+                "",
+                f"- 写作单元：{section.get('id')}",
+                f"- 标题：{section.get('chapter_title') or section.get('title')}",
+                f"- 文件：{section.get('file')}",
+                f"- 时间：{datetime.datetime.now():%Y-%m-%d %H:%M:%S}",
+                f"- 字数估算：{word_count}",
+                f"- 检测到 Markdown 加粗：{'是' if has_bold else '否'}",
+                f"- 检测到 1. 形式列表：{'是' if has_ordered_list else '否'}",
+                "",
+                "## 后续检查建议",
+                "",
+                "- 构建 Word 后检查标题样式、目录、分页符、公式编号和图表题注。",
+                "- 如果本章明显过短，建议使用 --overwrite 重新生成该写作单元。",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    print(f"OK: log -> {path}")
 
 
 def api_config(config):
@@ -264,6 +305,7 @@ def main():
         messages = build_prompt(config, section, existing_tail)
         content = chat_completion(base, key, model, messages, timeout=timeout)
         path.write_text(content.strip() + "\n", encoding="utf-8")
+        write_generation_log(config, section, content)
         update_plan_status(config, section["id"], "done")
         update_state(config, section["id"], section["file"], "done")
         max_tail = int(batch.get("max_context_tail_chars", 8000) or 8000)

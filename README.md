@@ -166,6 +166,7 @@ thesis/style.md
 - “重建大纲”：根据资料和规范重新生成 `thesis/outline.md`。
 - “写作计划”：根据大纲生成 `thesis/section_plan.json`。
 - “构建 Word”：把 Markdown 合并并导出 `output/thesis.docx`。
+- “论文 Review”：按章节串行审阅论文，章节过长会自动切块，输出 `output/review_results.md` 和 `thesis/logs/review_*.md`。
 - “关闭 WebUI”：关闭本地 Python 服务。
 
 右侧面板可以查看：
@@ -174,6 +175,7 @@ thesis/style.md
 - 论文大纲
 - 写作计划
 - 任务输出日志
+- 导出与日志：下载 `output.zip`、`thesis.docx`、`thesis.md`、Review 报告，并查看 `thesis/logs` 最新日志
 
 ### 5. 推荐测试顺序
 
@@ -274,6 +276,7 @@ python workflow.py generate --all --max-sections 3
 python workflow.py pause                  # 当前写作单元完成后暂停
 python workflow.py resume                 # 取消暂停
 python workflow.py build --no-assemble    # 只导出已有 output/thesis.md
+python workflow.py review                 # 按章节/分块审阅论文
 python workflow.py ui --port 8766         # 指定 WebUI 端口
 ```
 
@@ -285,6 +288,7 @@ python workflow.py ui --port 8766         # 指定 WebUI 端口
 output/thesis.md
 output/thesis.docx
 output/quality_gate_report.md
+output/review_results.md
 ```
 
 中间文件：

@@ -125,6 +125,15 @@ def 构建文档(参数):
     return 运行命令(命令)
 
 
+def 审阅论文(参数):
+    命令 = [sys.executable, "workflows/review/review_sections.py"]
+    if 参数.only:
+        命令.extend(["--only", 参数.only])
+    if 参数.max_chars:
+        命令.extend(["--max-chars", str(参数.max_chars)])
+    return 运行命令(命令)
+
+
 def 启动界面(参数):
     命令 = [sys.executable, "workflows/webui/server.py", str(参数.port)]
     return 运行命令(命令)
@@ -234,6 +243,11 @@ def 主函数():
     构建 = 子命令.add_parser("build", help="合并 Markdown 并导出 Word")
     构建.add_argument("--no-assemble", action="store_true", help="跳过章节合并，只导出已有 output/thesis.md")
     构建.set_defaults(func=构建文档)
+
+    审阅 = 子命令.add_parser("review", help="按章节/分块审阅已生成论文，输出 review 报告")
+    审阅.add_argument("--only", help="只审阅指定 section id 或章节文件")
+    审阅.add_argument("--max-chars", type=int, default=None, help="单次 review 请求最大字符数")
+    审阅.set_defaults(func=审阅论文)
 
     界面 = 子命令.add_parser("ui", help="启动本地 WebUI")
     界面.add_argument("--port", type=int, default=8765, help="WebUI 端口")

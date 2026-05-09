@@ -424,6 +424,58 @@ label {
   line-height: 1.55;
 }
 
+.logs.compact {
+  min-height: 260px;
+  max-height: 360px;
+  margin-top: 12px;
+}
+
+.download-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.download-card {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 4px 9px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid rgba(155, 126, 205, .25);
+  border-radius: 14px;
+  color: #3d315b;
+  background: rgba(255, 255, 255, .72);
+  text-decoration: none;
+}
+
+.download-card span {
+  grid-column: 2;
+  color: #826f9f;
+  font-size: 12px;
+}
+
+.log-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.log-list h3 {
+  margin: 0;
+  color: #523f7d;
+  font-size: 15px;
+}
+
+.log-list span {
+  padding: 7px 9px;
+  border: 1px solid rgba(155, 126, 205, .2);
+  border-radius: 10px;
+  color: #5f4f79;
+  background: rgba(255, 255, 255, .7);
+  overflow-wrap: anywhere;
+}
+
 .muted { color: #826f9f; }
 
 @media (max-width: 1120px) {
@@ -441,5 +493,6 @@ label {
   .form-grid, .upload-inputs, .plan-row { grid-template-columns: 1fr; }
   .plan-row code { grid-column: 1; }
   .command-strip button { flex: 1 1 144px; }
+  .download-grid { grid-template-columns: 1fr; }
   .reader { min-height: 420px; padding: 16px; }
 }

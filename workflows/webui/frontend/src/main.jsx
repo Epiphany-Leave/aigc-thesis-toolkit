@@ -7,6 +7,7 @@ import {
   FileArchive,
   FileText,
   FolderUp,
+  Download,
   Pause,
   Play,
   RefreshCcw,
@@ -28,12 +29,16 @@ const initialStatus = {
   paused: false,
   output_docx: false,
   output_md: false,
+  review_report: false,
+  downloads: [],
   runner: { running: false, output: [] },
   config: {},
   style: "",
   user_files: { items: [], total: 0, total_size: 0, hidden: 0 },
   preview: "",
-  outline: ""
+  outline: "",
+  thesis_logs: [],
+  latest_log: ""
 };
 
 function escapeHtml(value) {
@@ -243,6 +248,7 @@ function App() {
           <button className={activeTab === "outline" ? "active" : ""} onClick={() => setActiveTab("outline")}><ScrollText size={18} />大纲</button>
           <button className={activeTab === "plan" ? "active" : ""} onClick={() => setActiveTab("plan")}><Activity size={18} />写作计划</button>
           <button className={activeTab === "logs" ? "active" : ""} onClick={() => setActiveTab("logs")}><FileText size={18} />任务输出</button>
+          <button className={activeTab === "files" ? "active" : ""} onClick={() => setActiveTab("files")}><Download size={18} />导出与日志</button>
         </nav>
 
         <div className="status-pills">
@@ -265,6 +271,7 @@ function App() {
           <button onClick={() => runAction("outline")} disabled={status.runner?.running || busyAction}>重建大纲</button>
           <button onClick={() => runAction("plan")} disabled={status.runner?.running || busyAction}>写作计划</button>
           <button onClick={() => runAction("build")} disabled={status.runner?.running || busyAction}>构建 Word</button>
+          <button onClick={() => runAction("review")} disabled={status.runner?.running || busyAction}>论文 Review</button>
           <button className="danger" onClick={() => runAction("shutdown")}><Square size={15} />关闭 WebUI</button>
         </section>
 
@@ -359,6 +366,28 @@ function App() {
             {activeTab === "logs" && (
               <Panel title="任务输出" icon={<FileText size={18} />}>
                 <pre className="logs">{runnerOutput.length ? runnerOutput.join("\n") : "暂无输出"}</pre>
+              </Panel>
+            )}
+            {activeTab === "files" && (
+              <Panel title="导出与日志" icon={<Download size={18} />}>
+                <div className="download-grid">
+                  {(status.downloads || []).map((item) => (
+                    <a className="download-card" href={item.url} key={item.url}>
+                      <Download size={18} />
+                      <strong>{item.name}</strong>
+                      <span>{formatBytes(item.size)}</span>
+                    </a>
+                  ))}
+                  {(!status.downloads || status.downloads.length === 0) && <p className="muted">暂无可导出文件。请先构建 Word 或运行 Review。</p>}
+                </div>
+                <div className="log-list">
+                  <h3>论文日志</h3>
+                  {(status.thesis_logs || []).map((item) => (
+                    <span key={item.name}>{item.name} · {formatBytes(item.size)}</span>
+                  ))}
+                  {(!status.thesis_logs || status.thesis_logs.length === 0) && <p className="muted">暂无 thesis/logs 日志。</p>}
+                </div>
+                <pre className="logs compact">{status.latest_log || "暂无日志内容"}</pre>
               </Panel>
             )}
           </div>

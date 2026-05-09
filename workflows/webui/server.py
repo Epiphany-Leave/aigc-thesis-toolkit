@@ -12,7 +12,9 @@ import subprocess
 import sys
 import threading
 import time
+import tempfile
 import yaml
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
@@ -23,6 +25,8 @@ PLAN_FILE = WORK / "thesis" / "section_plan.json"
 PAUSE_FILE = WORK / "thesis" / "pause.flag"
 OUTPUT_DOCX = WORK / "output" / "thesis.docx"
 OUTPUT_MD = WORK / "output" / "thesis.md"
+OUTPUT_DIR = WORK / "output"
+REVIEW_REPORT = WORK / "output" / "review_results.md"
 OUTLINE_FILE = WORK / "thesis" / "outline.md"
 CONFIG_FILE = WORK / "configs" / "default.yaml"
 LOCAL_CONFIG_FILE = WORK / "configs" / "local.yaml"
@@ -118,12 +122,16 @@ def status_payload():
         "paused": PAUSE_FILE.exists(),
         "output_docx": OUTPUT_DOCX.exists(),
         "output_md": OUTPUT_MD.exists(),
+        "review_report": REVIEW_REPORT.exists(),
+        "downloads": list_downloads(),
         "runner": RUNNER.snapshot(),
         "config": load_settings(),
         "style": STYLE_FILE.read_text(encoding="utf-8") if STYLE_FILE.exists() else "",
         "user_files": list_user_files(),
         "preview": live_preview(),
         "outline": read_text_file(OUTLINE_FILE),
+        "thesis_logs": thesis_logs(),
+        "latest_log": latest_log_text(),
     }
 
 
@@ -289,6 +297,43 @@ def read_text_file(path):
     return path.read_text(encoding="utf-8-sig", errors="ignore")
 
 
+def list_downloads():
+    items = []
+    candidates = [
+        ("thesis.md", OUTPUT_MD),
+        ("thesis.docx", OUTPUT_DOCX),
+        ("review_results.md", REVIEW_REPORT),
+        ("quality_gate_report.md", WORK / "output" / "quality_gate_report.md"),
+    ]
+    for name, path in candidates:
+        if path.exists():
+            items.append({"name": name, "url": f"/download/{name}", "size": path.stat().st_size})
+    if OUTPUT_DIR.exists():
+        items.append({"name": "output.zip", "url": "/download/output.zip", "size": directory_size(OUTPUT_DIR)})
+    return items
+
+
+def directory_size(path):
+    return sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
+
+
+def thesis_logs():
+    log_dir = WORK / "thesis" / "logs"
+    if not log_dir.exists():
+        return []
+    logs = []
+    for path in sorted(log_dir.glob("*.md"), key=lambda item: item.stat().st_mtime, reverse=True):
+        logs.append({"name": path.name, "size": path.stat().st_size, "mtime": path.stat().st_mtime})
+    return logs[:20]
+
+
+def latest_log_text():
+    logs = thesis_logs()
+    if not logs:
+        return ""
+    return read_text_file(WORK / "thesis" / "logs" / logs[0]["name"])[-60000:]
+
+
 def photo_files():
     if not PHOTO_DIR.exists():
         return []
@@ -419,6 +464,7 @@ def run_command(name):
         "outline": [sys.executable, "workflow.py", "outline", "--overwrite"],
         "plan": [sys.executable, "workflow.py", "plan", "--overwrite-state"],
         "build": [sys.executable, "workflow.py", "build"],
+        "review": [sys.executable, "workflow.py", "review"],
     }
     if name not in commands:
         return False, "未知命令"
@@ -704,6 +750,9 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path.startswith("/photo/"):
             self.send_file(PHOTO_DIR / Path(parsed.path).name)
             return
+        if parsed.path.startswith("/download/"):
+            self.send_download(Path(parsed.path).name)
+            return
         if parsed.path.startswith("/assets/") or parsed.path in {"/", "/index.html"}:
             if self.try_send_frontend(parsed.path):
                 return
@@ -853,6 +902,44 @@ class Handler(BaseHTTPRequestHandler):
         data = path.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", mimetypes.guess_type(path.name)[0] or "application/octet-stream")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def send_download(self, name):
+        mapping = {
+            "thesis.md": OUTPUT_MD,
+            "thesis.docx": OUTPUT_DOCX,
+            "review_results.md": REVIEW_REPORT,
+            "quality_gate_report.md": WORK / "output" / "quality_gate_report.md",
+        }
+        if name == "output.zip":
+            if not OUTPUT_DIR.exists():
+                self.send_error(404)
+                return
+            with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as handle:
+                zip_path = Path(handle.name)
+            try:
+                with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                    for file in OUTPUT_DIR.rglob("*"):
+                        if file.is_file():
+                            archive.write(file, file.relative_to(OUTPUT_DIR).as_posix())
+                self.send_attachment(zip_path, "output.zip")
+            finally:
+                zip_path.unlink(missing_ok=True)
+            return
+
+        path = mapping.get(name)
+        if path is None or not path.exists():
+            self.send_error(404)
+            return
+        self.send_attachment(path, name)
+
+    def send_attachment(self, path, filename):
+        data = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", mimetypes.guess_type(filename)[0] or "application/octet-stream")
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
