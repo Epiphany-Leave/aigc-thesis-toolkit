@@ -6,6 +6,8 @@ engines:
     # 默认采用单主模型生成。
     # 论文是长文本一致性任务，默认不做多引擎融合，避免风格漂移和重复内容。
     mode: "single"
+    # chapter：一章一次生成，质量和上下文一致性更好；subsection：一小节一次生成，token 更省。
+    granularity: "chapter"
     default: "writer"
     providers:
       writer:
@@ -19,10 +21,11 @@ engines:
         role: "draft thesis sections"
         weight: 1.0
     batch:
-      # 0 表示 generate --all 会连续串行生成所有未完成小节；可用 workflow.py pause 暂停在下一个小节前。
+      # 0 表示 generate --all 会连续串行生成所有未完成写作单元；可用 workflow.py pause 暂停在下一个写作单元前。
       max_sections_per_run: 0
       sleep_seconds: 3
-      request_timeout_seconds: 180
+      request_timeout_seconds: 300
+      max_context_tail_chars: 8000
   quality_gate:
     rule_based: true
     run_after_assemble: true
@@ -55,6 +58,8 @@ export_docx:
   output_docx: output/thesis.docx
   fallback_docx: output/thesis_latest.docx
   toc_depth: 3
+  # 先关闭 Markdown 自动锚点链接，避免 Word 中引用跳转全部落到文档首行。
+  enable_cross_reference_links: false
 
 review:
   input_markdown: output/thesis.md

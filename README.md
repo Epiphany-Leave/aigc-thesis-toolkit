@@ -6,8 +6,8 @@ AIGC Thesis Toolkit 是一个本地运行的 AI 论文写作工作流。
 
 ![AIGC Thesis Toolkit WebUI](image.png)
 
-它可以把你放入 `user_data/` 的参考资料、学校格式要求、开题/中期报告、参考论文、仿真或实验数据等内容，整理成可追踪的资料索引，并辅助生成论文大纲、小节正文、完整 Markdown 和 Word 文档。
-这个项目的目标不是“一键交作业”，而是提供一个更稳定、更可控、更容易续写的 AIGC 论文工作台：你提供真实资料和格式要求，系统按小节串行生成内容，并保留中间文件、状态和预览，方便你检查、修改和导出。
+它可以把你放入 `user_data/` 的参考资料、学校格式要求、开题/中期报告、参考论文、仿真或实验数据等内容，整理成可追踪的资料索引，并辅助生成论文大纲、章节正文、完整 Markdown 和 Word 文档。
+这个项目的目标不是“一键交作业”，而是提供一个更稳定、更可控、更容易续写的 AIGC 论文工作台：你提供真实资料和格式要求，系统默认按章串行生成内容，并保留中间文件、状态和预览，方便你检查、修改和导出。
 
 ## 功能亮点
 
@@ -15,8 +15,9 @@ AIGC Thesis Toolkit 是一个本地运行的 AI 论文写作工作流。
 - **支持 OpenAI 兼容接口**：只要服务兼容 Chat Completions 格式，就可以通过 `api_base`、`api_key`、`model` 接入。
 - **自动资料索引**：扫描 `user_data/`，生成 `user_data/resources.md`，让模型知道有哪些可用资料。
 - **自动写作规范**：可以从学校模板、任务书、开题报告、论文范例等资料中生成 `thesis/style.md`，也可以手动导入。
-- **按小节串行生成**：把论文大纲拆成小节任务，上一小节完成后再进入下一小节，降低长文本超时和 API 卡死概率。
-- **可暂停、可续写**：生成进度记录在 `thesis/section_plan.json`，已经完成的小节默认不会重复生成。
+- **按章高质量生成**：默认把论文大纲拆成章节任务，一章生成完成后再进入下一章，用更高 token 消耗换取更好的上下文一致性。
+- **可暂停、可续写**：生成进度记录在 `thesis/section_plan.json`，已经完成的章节默认不会重复生成。
+- **稳定的导出格式**：公式编号会在导出前从公式体中拆出；插图默认保留位置、题注和说明，不直接插入图片。
 - **导出 Word**：把生成的小节合并成 `output/thesis.md`，再按 `template/reference.docx` 导出 `output/thesis.docx`。
 - **适合上传 GitHub**：API Key、个人资料、生成正文、日志和输出文件默认不会提交。
 
@@ -28,7 +29,7 @@ user_data/ 个人资料
         -> AI 生成或导入 thesis/style.md
         -> AI 生成 thesis/outline.md
         -> 生成 thesis/section_plan.json
-        -> 逐小节生成 thesis/sections/
+        -> 逐章生成 thesis/sections/
         -> 合并 output/thesis.md
         -> 导出 output/thesis.docx
 ```
@@ -62,12 +63,12 @@ http://127.0.0.1:8765
 
 启动 WebUI 后，常规流程都可以在页面里完成：
 
-1. 填写论文题目、API Base、API Key、模型、超时时间和小节间隔。
+1. 填写论文题目、API Base、API Key、模型、超时时间和章节间隔。
 2. 上传论文相关资料到 `user_data/`，支持选择多个文件，也支持选择整个文件夹；上传完成后页面会提示导入结果。
 3. 编辑、导入或自动生成 `thesis/style.md` 写作规范。
 4. 点击“开始完整流程”。
 5. 在页面右侧查看论文大纲、任务输出和实时论文预览。
-6. 需要停下时点击“暂停”，当前小节完成后会停在下一小节之前。
+6. 需要停下时点击“暂停”，当前章节完成后会停在下一章之前。
 7. 生成完成后点击“构建 Word”，得到最终文档。
 
 WebUI 保存的私有配置会写入：
@@ -112,6 +113,7 @@ project:
 
 engines:
   generation:
+    granularity: "chapter"
     providers:
       writer:
         api_base: "https://api.openai.com/v1"
@@ -120,14 +122,16 @@ engines:
     batch:
       max_sections_per_run: 0
       sleep_seconds: 3
-      request_timeout_seconds: 180
+      request_timeout_seconds: 300
+      max_context_tail_chars: 8000
 ```
 
 说明：
 
-- `max_sections_per_run: 0` 表示 `generate --all` 会连续串行生成所有未完成小节。
-- 如果想限制单次最多生成 3 个小节，可以设为 `3`。
-- `sleep_seconds` 是两个小节请求之间的等待时间。
+- `engines.generation.granularity: "chapter"` 是默认高质量模式，一次生成一章；如果更想省 token，可以改成 `"subsection"`。
+- `max_sections_per_run: 0` 表示 `generate --all` 会连续串行生成所有未完成写作单元。
+- 如果想限制单次最多生成 3 个写作单元，可以设为 `3`。
+- `sleep_seconds` 是两个写作单元请求之间的等待时间。
 - `request_timeout_seconds` 是单次 API 请求超时时间。
 
 ## 命令行用法
@@ -150,10 +154,10 @@ python workflow.py build
 
 ```bash
 python workflow.py status                 # 查看进度
-python workflow.py generate               # 生成下一个未完成小节
-python workflow.py generate --all         # 串行生成全部未完成小节
+python workflow.py generate               # 生成下一个未完成写作单元
+python workflow.py generate --all         # 串行生成全部未完成写作单元
 python workflow.py generate --all --max-sections 3
-python workflow.py pause                  # 当前小节完成后暂停
+python workflow.py pause                  # 当前写作单元完成后暂停
 python workflow.py resume                 # 取消暂停
 python workflow.py build --no-assemble    # 只导出已有 output/thesis.md
 python workflow.py ui --port 8766         # 指定 WebUI 端口
@@ -194,12 +198,12 @@ aigc-thesis-toolkit/
 │   └── reference.docx               # Word 样式模板
 ├── thesis/                          
 │   ├── style.md                     # 写作与格式规范
-│   ├── sections/                    # 生成的小节 Markdown
+│   ├── sections/                    # 生成的章节/小节 Markdown
 │   └── logs/                        # 运行日志
 ├── user_data/                       # 输出报告（终端/txt/json/html）
 │   └── hc3/                         # 个人资料目录占位说明
 ├── workflows/
-│   ├── write/                       # 资料、规范、大纲、小节生成
+│   ├── write/                       # 资料、规范、大纲、正文生成
 │   ├── fengci/                      # Markdown 到 Word 的导出流程
 │   ├── fengci/                      # 质量检查与审阅流程
 │   └── hc3/                         # 本地 WebUI

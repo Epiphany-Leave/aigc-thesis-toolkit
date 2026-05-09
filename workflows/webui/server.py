@@ -168,8 +168,9 @@ def load_settings():
         "api_base": provider.get("api_base", ""),
         "api_key": provider.get("api_key", ""),
         "model": provider.get("model", ""),
+        "granularity": generation.get("granularity", "chapter"),
         "sleep_seconds": batch.get("sleep_seconds", 3),
-        "request_timeout_seconds": batch.get("request_timeout_seconds", 180),
+        "request_timeout_seconds": batch.get("request_timeout_seconds", 300),
         "max_sections_per_run": batch.get("max_sections_per_run", 0),
     }
 
@@ -186,8 +187,10 @@ def update_settings(values):
     provider["api_base"] = values.get("api_base", [""])[0].strip()
     provider["api_key"] = values.get("api_key", [""])[0].strip()
     provider["model"] = values.get("model", [""])[0].strip()
+    granularity = values.get("granularity", ["chapter"])[0]
+    generation["granularity"] = granularity if granularity in {"chapter", "subsection"} else "chapter"
     batch["sleep_seconds"] = as_number(values.get("sleep_seconds", ["3"])[0], float, 3)
-    batch["request_timeout_seconds"] = as_number(values.get("request_timeout_seconds", ["180"])[0], int, 180)
+    batch["request_timeout_seconds"] = as_number(values.get("request_timeout_seconds", ["300"])[0], int, 300)
     batch["max_sections_per_run"] = as_number(values.get("max_sections_per_run", ["0"])[0], int, 0)
     save_local_config(config)
 
@@ -422,6 +425,8 @@ def render_page(notice=""):
     running_text = "运行中" if runner["running"] else "空闲"
     paused_text = "已请求暂停" if data["paused"] else "未暂停"
     settings = data["config"]
+    chapter_selected = "selected" if settings.get("granularity") == "chapter" else ""
+    subsection_selected = "selected" if settings.get("granularity") == "subsection" else ""
     file_summary = data["user_files"]
     user_files = "\n".join(
         f"<tr><td>{html.escape(item['path'])}</td><td>{item['size']}</td></tr>" for item in file_summary["items"]
@@ -462,7 +467,7 @@ def render_page(notice=""):
     .actions {{ display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0; }}
     .formgrid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }}
     label {{ display: block; font-size: 12px; color: #526579; margin-bottom: 5px; }}
-    input, textarea {{ width: 100%; box-sizing: border-box; border: 1px solid #cab8ee; border-radius: 9px; padding: 9px; font: inherit; background: rgba(255,255,255,.92); }}
+    input, select, textarea {{ width: 100%; box-sizing: border-box; border: 1px solid #cab8ee; border-radius: 9px; padding: 9px; font: inherit; background: rgba(255,255,255,.92); }}
     textarea {{ min-height: 210px; resize: vertical; }}
     button {{ border: 1px solid #c7abea; background: rgba(255,255,255,.95); color: #3d315b; border-radius: 999px; padding: 9px 14px; cursor: pointer; font-weight: 700; box-shadow: 0 5px 14px rgba(111,74,168,.12); }}
     button:hover {{ transform: translateY(-1px); }}
@@ -493,14 +498,14 @@ def render_page(notice=""):
   </style>
 </head>
 <body>
-  <header><div class="hero"><h1>AIGC Thesis Toolkit</h1><div class="subtitle">{html.escape(data["project"])}<br>上传资料、配置模型、连续生成小节，并实时预览已写出的正文。关闭页面不会停止后台任务，使用“关闭 WebUI”或终端 Ctrl+C 结束服务。</div></div></header>
+  <header><div class="hero"><h1>AIGC Thesis Toolkit</h1><div class="subtitle">{html.escape(data["project"])}<br>上传资料、配置模型、连续生成论文，并实时预览已写出的正文。关闭页面不会停止后台任务，使用“关闭 WebUI”或终端 Ctrl+C 结束服务。</div></div></header>
   <main>
     <div class="bar" title="{percent}%"><span></span></div>
     <div class="grid">
-      <div class="panel"><div class="label">进度</div><div class="value" id="metric-progress">{data["done"]}/{data["total"]} 小节</div></div>
+      <div class="panel"><div class="label">进度</div><div class="value" id="metric-progress">{data["done"]}/{data["total"]} 写作单元</div></div>
       <div class="panel"><div class="label">任务</div><div class="value" id="metric-running">{running_text}</div></div>
       <div class="panel"><div class="label">暂停</div><div class="value" id="metric-paused">{paused_text}</div></div>
-      <div class="panel"><div class="label">当前小节</div><div class="value" id="metric-current">{html.escape(current.get("subsection_title") or current.get("title") or "无")}</div></div>
+      <div class="panel"><div class="label">当前写作单元</div><div class="value" id="metric-current">{html.escape(current.get("subsection_title") or current.get("title") or "无")}</div></div>
     </div>
 
     <form class="actions" method="post" action="/action">
@@ -511,7 +516,7 @@ def render_page(notice=""):
       <button name="cmd" value="style">自动生成规范</button>
       <button name="cmd" value="resources">刷新资料索引</button>
       <button name="cmd" value="outline">重建大纲</button>
-      <button name="cmd" value="plan">重建小节计划</button>
+      <button name="cmd" value="plan">重建写作计划</button>
       <button name="cmd" value="build">构建 Word</button>
       <button class="danger" name="cmd" value="shutdown">关闭 WebUI</button>
     </form>
@@ -528,9 +533,10 @@ def render_page(notice=""):
               <div><label>API Base</label><input name="api_base" value="{html.escape(str(settings['api_base']))}"></div>
               <div><label>模型</label><input name="model" value="{html.escape(str(settings['model']))}"></div>
               <div><label>API Key，保存到 configs/local.yaml，不提交 GitHub</label><input name="api_key" type="password" value="{html.escape(str(settings['api_key']))}"></div>
-              <div><label>小节间隔秒数</label><input name="sleep_seconds" value="{html.escape(str(settings['sleep_seconds']))}"></div>
+              <div><label>生成粒度</label><select name="granularity"><option value="chapter" {chapter_selected}>按章高质量生成</option><option value="subsection" {subsection_selected}>按小节省 token 生成</option></select></div>
+              <div><label>写作单元间隔秒数</label><input name="sleep_seconds" value="{html.escape(str(settings['sleep_seconds']))}"></div>
               <div><label>请求超时秒数</label><input name="request_timeout_seconds" value="{html.escape(str(settings['request_timeout_seconds']))}"></div>
-              <div><label>本轮最多小节数，0 为不限制</label><input name="max_sections_per_run" value="{html.escape(str(settings['max_sections_per_run']))}"></div>
+              <div><label>本轮最多写作单元数，0 为不限制</label><input name="max_sections_per_run" value="{html.escape(str(settings['max_sections_per_run']))}"></div>
             </div>
             <div class="actions"><button class="primary">保存配置</button></div>
           </form>
@@ -594,7 +600,7 @@ def render_page(notice=""):
       </div>
     </section>
 
-    <h2>小节计划</h2>
+    <h2>写作计划</h2>
     <table>
       <thead><tr><th>状态</th><th>ID</th><th>章</th><th>小节</th><th>文件</th></tr></thead>
       <tbody>{rows or '<tr><td colspan="5">尚未生成计划</td></tr>'}</tbody>
@@ -642,7 +648,7 @@ def render_page(notice=""):
         const data = await response.json();
         const percent = data.total ? Math.round(data.done * 100 / data.total) : 0;
         document.querySelector('.bar span').style.width = percent + '%';
-        document.getElementById('metric-progress').textContent = `${{data.done}}/${{data.total}} 小节`;
+        document.getElementById('metric-progress').textContent = `${{data.done}}/${{data.total}} 写作单元`;
         document.getElementById('metric-running').textContent = data.runner.running ? '运行中' : '空闲';
         document.getElementById('metric-paused').textContent = data.paused ? '已请求暂停' : '未暂停';
         document.getElementById('metric-current').textContent = (data.current && (data.current.subsection_title || data.current.title)) || '无';
@@ -693,7 +699,7 @@ class Handler(BaseHTTPRequestHandler):
                 cmd = values.get("cmd", [""])[0]
                 if cmd == "pause":
                     set_pause(True)
-                    notice = "已请求暂停：当前小节完成后会停在下一小节之前。"
+                    notice = "已请求暂停：当前写作单元完成后会停在下一个写作单元之前。"
                 elif cmd == "resume":
                     set_pause(False)
                     notice = "已恢复生成。"

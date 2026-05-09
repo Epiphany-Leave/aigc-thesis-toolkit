@@ -130,7 +130,7 @@ def 启动界面(参数):
 def 暂停生成(_参数):
     暂停文件.parent.mkdir(parents=True, exist_ok=True)
     暂停文件.write_text("paused\n", encoding="utf-8")
-    print("已请求暂停：当前小节完成后会停在下一个小节开始前。")
+    print("已请求暂停：当前写作单元完成后会停在下一个写作单元开始前。")
     return 0
 
 
@@ -168,9 +168,9 @@ def 完整流程(参数):
             return 退出码
     if not 章节全部完成():
         if 暂停文件.exists():
-            print("生成已暂停；仍有未完成小节，暂不导出 Word。运行 python workflow.py resume 后可继续。")
+            print("生成已暂停；仍有未完成写作单元，暂不导出 Word。运行 python workflow.py resume 后可继续。")
         else:
-            print("仍有未完成小节，暂不导出 Word。可继续运行 python workflow.py all。")
+            print("仍有未完成写作单元，暂不导出 Word。可继续运行 python workflow.py all。")
         return 0
     return 运行命令([sys.executable, "workflow.py", "build"])
 

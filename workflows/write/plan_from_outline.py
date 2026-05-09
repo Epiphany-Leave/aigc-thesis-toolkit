@@ -180,9 +180,10 @@ def make_item(thesis_dir, chapter_index, chapter_title, existing_plan, existing_
     }
 
 
-def make_plan(thesis_dir, chapters, existing_plan, existing_state):
+def make_plan(thesis_dir, chapters, existing_plan, existing_state, granularity="chapter"):
     plan = []
     chapter_index = 0
+    chapter_mode = granularity != "subsection"
     for chapter in chapters:
         chapter_title = chapter["title"]
         if is_abstract(chapter_title):
@@ -192,22 +193,31 @@ def make_plan(thesis_dir, chapters, existing_plan, existing_state):
             index = chapter_index
 
         subsections = chapter.get("subsections") or []
-        if subsections:
-            for subsection_index, subsection_title in enumerate(subsections, start=1):
-                plan.append(
-                    make_item(
-                        thesis_dir,
-                        index,
-                        chapter_title,
-                        existing_plan,
-                        existing_state,
-                        subsection_index,
-                        subsection_title,
-                    )
-                )
+        if subsections and chapter_mode:
+            item = make_item(thesis_dir, index, chapter_title, existing_plan, existing_state)
+            item["subsections"] = subsections
+            item["generation_granularity"] = "chapter"
+            plan.append(item)
             continue
 
-        plan.append(make_item(thesis_dir, index, chapter_title, existing_plan, existing_state))
+        if subsections:
+            for subsection_index, subsection_title in enumerate(subsections, start=1):
+                item = make_item(
+                    thesis_dir,
+                    index,
+                    chapter_title,
+                    existing_plan,
+                    existing_state,
+                    subsection_index,
+                    subsection_title,
+                )
+                item["generation_granularity"] = "subsection"
+                plan.append(item)
+            continue
+
+        item = make_item(thesis_dir, index, chapter_title, existing_plan, existing_state)
+        item["generation_granularity"] = "chapter" if chapter_mode else "subsection"
+        plan.append(item)
 
         for extra_file in extra_section_files(thesis_dir, index, plan[-1]["file"]):
             extra_id = f"ch{index:02d}_{Path(extra_file).stem}"
@@ -269,8 +279,9 @@ def main():
 
     existing_plan = load_json(plan_path, {})
     existing_state = load_json(thesis_dir / "state.json", {})
-    plan = make_plan(thesis_dir, chapters, existing_plan, existing_state)
-    write_json(plan_path, {"sections": plan})
+    granularity = config.get("engines", {}).get("generation", {}).get("granularity", "chapter")
+    plan = make_plan(thesis_dir, chapters, existing_plan, existing_state, granularity)
+    write_json(plan_path, {"generation_granularity": granularity, "sections": plan})
     write_state(thesis_dir, project_title, plan, overwrite=args.overwrite_state)
 
     print(f"OK: plan -> {plan_path}")

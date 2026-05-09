@@ -93,25 +93,37 @@ def build_prompt(config, section, existing_tail):
     resources = read_text(user_data_dir / "resources.md")
     chapter_title = section.get("chapter_title") or section.get("title", "")
     subsection_title = section.get("subsection_title") or section.get("title", "")
+    subsections = section.get("subsections") or []
+    is_chapter_unit = bool(subsections) or not subsection_title
+    unit_name = "完整章节" if is_chapter_unit else "论文小节"
+    subsection_lines = "\n".join(f"- {title}" for title in subsections) if subsections else "（无）"
+    heading_rule = (
+        "当前写作单元是完整章节：主标题用 ## 章节标题，章内小节用 ###，必须覆盖下方小节清单。"
+        if is_chapter_unit
+        else "当前写作单元是小节：主标题用 ## 当前小节标题，不要输出所属章节的 # 标题。"
+    )
 
     return [
         {
             "role": "system",
             "content": (
-                "你是严谨的本科毕业论文写作助手。只输出当前小节 Markdown 正文，不解释过程。"
-                "保持学术论文风格、术语统一、逻辑连续。不要编造数据、文献或实验结果；"
+                "你是严谨的本科毕业论文写作助手。只输出当前写作单元的 Markdown 正文，不解释过程。"
+                "优先保证论文质量、上下文一致性、推导完整性和格式稳定性；不要为了省 token 压缩必要论证。"
+                "保持学术论文风格、术语统一、逻辑连续。不要编造数据、文献或实验结果。"
                 "如果资料不足，用保守表述并保留 TODO 标记。"
             ),
         },
         {
             "role": "user",
-            "content": f"""请为以下论文小节生成 Markdown 内容。
+            "content": f"""请为以下{unit_name}生成 Markdown 内容。
 
 论文题目：{config.get('project', {}).get('title', '')}
 
 当前写作单元：
 - 所属章节：{chapter_title}
 - 当前小节：{subsection_title}
+- 章节内小节清单：
+{subsection_lines}
 - 输出文件：{section['file']}
 
 写作规范：
@@ -127,12 +139,21 @@ def build_prompt(config, section, existing_tail):
 {existing_tail}
 
 硬性要求：
-1. 只写当前小节，不补写其他章节或其他小节。
-2. 使用 Markdown 标题；如果当前写作单元是小节，主标题用 ##；不要输出所属章节的 # 标题。
-3. 公式使用 LaTeX display math，公式编号写成独立的 (X-Y)；后续 Word 导出流程会把它转换为正确的公式编号样式。
-4. 图题使用“图X-Y 标题”，表题使用“表X-Y 标题”。
-5. 引用图、表、公式、文献时使用自然中文表述，不要写成无法追踪的占位符。
-6. 不要用代码块包裹整篇输出。
+1. 只写当前写作单元，不补写其他章节。
+2. 使用 Markdown 标题；{heading_rule}
+3. 公式必须使用独立 display math，编号必须单独占一行，格式如下：
+   $$
+   公式内容
+   $$
+   (X-Y)
+   不要把编号写进 $$...$$ 内部，不要使用 \\tag{{}}。
+4. 公式宁可少而准确，也不要生成不确定或明显错误的复杂公式；每个公式前后必须有必要的变量说明和物理含义解释。
+5. 暂时不要插入真实图片、Markdown 图片语法或 HTML img。需要插图的位置只保留占位、图题和说明，格式如下：
+   👉【此处插入图X-Y 图题】
+   图X-Y 图题
+   说明：这里描述图片应包含的内容、来源或绘制要求。
+6. 表题使用“表X-Y 标题”。引用图、表、公式、文献时使用自然中文表述，例如“如式(X-Y)所示”“如图X-Y所示”，不要手写 Markdown 链接。
+7. 不要用代码块包裹整篇输出。
 """,
         },
     ]
@@ -242,7 +263,8 @@ def main():
         path.write_text(content.strip() + "\n", encoding="utf-8")
         update_plan_status(config, section["id"], "done")
         update_state(config, section["id"], section["file"], "done")
-        existing_tail = content[-2000:]
+        max_tail = int(batch.get("max_context_tail_chars", 8000) or 8000)
+        existing_tail = content[-max_tail:]
         print(f"OK: generated {path}")
         if sleep_seconds:
             time.sleep(sleep_seconds)

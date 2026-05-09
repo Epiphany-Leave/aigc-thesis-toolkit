@@ -3,6 +3,7 @@ project:
 
 engines:
   generation:
+    granularity: "chapter"
     providers:
       writer:
         api_base: "https://api.openai.com/v1"
@@ -11,4 +12,5 @@ engines:
     batch:
       max_sections_per_run: 0
       sleep_seconds: 3
-      request_timeout_seconds: 180
+      request_timeout_seconds: 300
+      max_context_tail_chars: 8000
