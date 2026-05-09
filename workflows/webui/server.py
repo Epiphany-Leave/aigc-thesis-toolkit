@@ -11,7 +11,6 @@ import subprocess
 import sys
 import threading
 import time
-import uuid
 import yaml
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -23,6 +22,7 @@ PLAN_FILE = WORK / "thesis" / "section_plan.json"
 PAUSE_FILE = WORK / "thesis" / "pause.flag"
 OUTPUT_DOCX = WORK / "output" / "thesis.docx"
 OUTPUT_MD = WORK / "output" / "thesis.md"
+OUTLINE_FILE = WORK / "thesis" / "outline.md"
 CONFIG_FILE = WORK / "configs" / "default.yaml"
 LOCAL_CONFIG_FILE = WORK / "configs" / "local.yaml"
 STYLE_FILE = WORK / "thesis" / "style.md"
@@ -120,6 +120,7 @@ def status_payload():
         "style": STYLE_FILE.read_text(encoding="utf-8") if STYLE_FILE.exists() else "",
         "user_files": list_user_files(),
         "preview": live_preview(),
+        "outline": read_text_file(OUTLINE_FILE),
     }
 
 
@@ -157,7 +158,7 @@ def save_local_config(config):
 
 
 def load_settings():
-    config = {}
+    config = load_config()
     generation = config.get("engines", {}).get("generation", {})
     provider = generation.get("providers", {}).get("writer", {})
     batch = generation.get("batch", {})
@@ -240,6 +241,12 @@ def list_user_files():
             }
         )
     return files
+
+
+def read_text_file(path):
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8-sig", errors="ignore")
 
 
 def photo_files():
@@ -327,13 +334,27 @@ def save_upload(content_type, body):
                 filename = segment.split("=", 1)[1].strip().strip('"')
         if not filename:
             continue
-        safe_name = Path(filename.replace("\\", "/")).name
-        if not safe_name:
-            safe_name = f"upload-{uuid.uuid4().hex}"
+        safe_path = safe_relative_upload_path(filename)
+        if safe_path is None:
+            continue
         content = content.rstrip(b"\r\n")
         if content.endswith(b"--"):
             content = content[:-2].rstrip(b"\r\n")
-        (USER_DATA_DIR / safe_name).write_bytes(content)
+        target = USER_DATA_DIR / safe_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+
+
+def safe_relative_upload_path(filename):
+    parts = []
+    for part in filename.replace("\\", "/").split("/"):
+        cleaned = part.strip()
+        if not cleaned or cleaned in {".", ".."}:
+            continue
+        parts.append(cleaned)
+    if not parts:
+        return None
+    return Path(*parts)
 
 
 def run_command(name):
@@ -384,6 +405,11 @@ def render_page():
     photos = photo_files()
     hero_photo = f"/photo/{html.escape(photos[0].name)}" if photos else ""
     preview_html = render_markdown(data["preview"])
+    outline_html = (
+        render_markdown(data["outline"])
+        if data["outline"]
+        else '<p class="muted">暂无大纲。点击“重建大纲”后会在这里显示。</p>'
+    )
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -486,7 +512,7 @@ def render_page():
 
         <section>
           <h2>资料文件</h2>
-          <form class="panel upload-zone" method="post" action="/upload" enctype="multipart/form-data">
+          <form class="panel upload-zone" method="post" action="/upload" enctype="multipart/form-data" onsubmit="return hasSelectedFiles(this);">
             <h3>上传到 user_data</h3>
             <div class="muted">建议上传与论文直接相关的资料，AI 会先生成资料索引，再据此写大纲和正文。</div>
             <div class="examples">
@@ -496,6 +522,8 @@ def render_page():
               <div class="example">原理图、流程图、实物照片</div>
             </div>
             <p><input type="file" name="files" multiple></p>
+            <p><input type="file" name="files" webkitdirectory directory multiple></p>
+            <div class="muted">第一行用于选择多个文件；第二行用于选择整个文件夹。未选择文件时浏览器不会提交上传。</div>
             <div class="actions"><button class="primary">上传文件</button></div>
           </form>
           <div class="panel">
@@ -516,13 +544,17 @@ def render_page():
           <form class="panel" method="post" action="/style-upload" enctype="multipart/form-data">
             <h3>导入写作规范</h3>
             <div class="muted">支持上传 Markdown/TXT 格式的学校论文规范、格式说明或你整理好的 style.md。PDF/Word 请先转成文本，或放入 user_data 后点击“自动生成规范”。</div>
-            <p><input type="file" name="style_file"></p>
+            <p><input type="file" name="style_file" required></p>
             <div class="actions"><button class="primary">导入为 thesis/style.md</button></div>
           </form>
         </section>
       </div>
 
       <div class="stack">
+        <section>
+          <h2>论文大纲</h2>
+          <article class="panel preview outline-preview" id="outline">{outline_html}</article>
+        </section>
         <section>
           <h2>实时论文预览</h2>
           <article class="panel preview" id="preview">{preview_html}</article>
@@ -541,6 +573,14 @@ def render_page():
     </table>
   </main>
   <script>
+    function hasSelectedFiles(form) {{
+      for (const input of form.querySelectorAll('input[type="file"]')) {{
+        if (input.files && input.files.length > 0) return true;
+      }}
+      alert('请先选择文件或文件夹。');
+      return false;
+    }}
+
     function renderMarkdown(text) {{
       if (!text) return '<p class="muted">暂无已生成正文。开始生成后会在这里实时出现。</p>';
       const escapeHtml = value => value.replace(/[&<>"']/g, ch => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[ch]));
@@ -580,6 +620,7 @@ def render_page():
         document.getElementById('metric-current').textContent = (data.current && (data.current.subsection_title || data.current.title)) || '无';
         document.getElementById('logs').textContent = data.runner.output.length ? data.runner.output.join('\\n') : '暂无输出';
         document.getElementById('preview').innerHTML = renderMarkdown(data.preview || '');
+        document.getElementById('outline').innerHTML = data.outline ? renderMarkdown(data.outline) : '<p class="muted">暂无大纲。点击“重建大纲”后会在这里显示。</p>';
       }} catch (error) {{
         console.warn(error);
       }}
