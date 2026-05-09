@@ -4,6 +4,8 @@ AIGC Thesis Toolkit is a local thesis-writing workflow for turning your own refe
 
 The toolkit provides both a command-line workflow and a local WebUI. The recommended path is to start the WebUI, upload materials, configure your OpenAI-compatible API, and let the workflow generate the thesis section by section.
 
+![AIGC Thesis Toolkit WebUI](image.png)
+
 ## Highlights
 
 - **Local WebUI**: configure API settings, upload materials, edit writing rules, monitor progress, pause/resume generation, and preview generated thesis content in the browser.
