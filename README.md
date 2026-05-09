@@ -1,38 +1,38 @@
 # AIGC Thesis Toolkit
 
-AIGC Thesis Toolkit is a local thesis-writing workflow for turning your own reference materials into a structured thesis draft, Markdown manuscript, and Word document. It is designed for students who want an AI-assisted writing pipeline that is traceable, resumable, and easier to operate than a pile of one-off prompts.
-
-The toolkit provides both a command-line workflow and a local WebUI. The recommended path is to start the WebUI, upload materials, configure your OpenAI-compatible API, and let the workflow generate the thesis section by section.
-
 ![AIGC Thesis Toolkit WebUI](image.png)
 
-## Highlights
+AIGC Thesis Toolkit 是一个本地运行的 AI 论文写作工作流。它可以把你放入 `user_data/` 的参考资料、学校格式要求、开题/中期报告、参考论文、仿真或实验数据等内容，整理成可追踪的资料索引，并辅助生成论文大纲、小节正文、完整 Markdown 和 Word 文档。
 
-- **Local WebUI**: configure API settings, upload materials, edit writing rules, monitor progress, pause/resume generation, and preview generated thesis content in the browser.
-- **OpenAI-compatible API support**: works with services that expose the Chat Completions API format.
-- **Material-aware workflow**: scans `user_data/`, builds an AI-generated resource index, and uses your materials as writing context.
-- **Automatic writing style generation**: can derive `thesis/style.md` from school templates, task books, reports, examples, and other uploaded references.
-- **Small-step generation**: splits the thesis plan into subsections and generates them serially, reducing timeout and overload risk.
-- **Resumable state**: tracks generated subsections in `thesis/section_plan.json` and skips completed files by default.
-- **Word export**: assembles Markdown and exports `output/thesis.docx` using `template/reference.docx`.
-- **Git-friendly defaults**: private inputs, generated drafts, logs, local API keys, and output files are ignored by default.
+这个项目的目标不是“一键交作业”，而是提供一个更稳定、更可控、更容易续写的 AIGC 论文工作台：你提供真实资料和格式要求，系统按小节串行生成内容，并保留中间文件、状态和预览，方便你检查、修改和导出。
 
-## How It Works
+## 功能亮点
+
+- **本地 WebUI 工作台**：在浏览器里配置 API、上传资料、编辑/导入写作规范、启动生成、暂停/继续、查看进度和实时预览正文。
+- **支持 OpenAI 兼容接口**：只要服务兼容 Chat Completions 格式，就可以通过 `api_base`、`api_key`、`model` 接入。
+- **自动资料索引**：扫描 `user_data/`，生成 `user_data/resources.md`，让模型知道有哪些可用资料。
+- **自动写作规范**：可以从学校模板、任务书、开题报告、论文范例等资料中生成 `thesis/style.md`，也可以手动导入。
+- **按小节串行生成**：把论文大纲拆成小节任务，上一小节完成后再进入下一小节，降低长文本超时和 API 卡死概率。
+- **可暂停、可续写**：生成进度记录在 `thesis/section_plan.json`，已经完成的小节默认不会重复生成。
+- **导出 Word**：把生成的小节合并成 `output/thesis.md`，再按 `template/reference.docx` 导出 `output/thesis.docx`。
+- **适合上传 GitHub**：API Key、个人资料、生成正文、日志和输出文件默认不会提交。
+
+## 工作流程
 
 ```text
-user_data/ reference materials
-        -> AI-generated user_data/resources.md
-        -> AI-generated or imported thesis/style.md
-        -> AI-generated thesis/outline.md
-        -> thesis/section_plan.json
-        -> serial subsection generation in thesis/sections/
-        -> output/thesis.md
-        -> output/thesis.docx
+user_data/ 个人资料
+        -> AI 生成 user_data/resources.md
+        -> AI 生成或导入 thesis/style.md
+        -> AI 生成 thesis/outline.md
+        -> 生成 thesis/section_plan.json
+        -> 逐小节生成 thesis/sections/
+        -> 合并 output/thesis.md
+        -> 导出 output/thesis.docx
 ```
 
-## Quick Start
+## 快速开始
 
-The project is intended to run in WSL, Linux, macOS, or another Python environment with `venv` support.
+推荐在 WSL、Linux、macOS 或其他支持 `venv` 的 Python 环境中运行。
 
 ```bash
 git clone https://github.com/Epiphany-Leave/aigc-thesis-toolkit.git
@@ -47,67 +47,70 @@ python workflow.py init
 python workflow.py ui
 ```
 
-Open the WebUI:
+打开浏览器：
 
 ```text
 http://127.0.0.1:8765
 ```
 
-If port `8765` is already in use, the server will try the next available port and print the actual URL.
+如果 `8765` 端口已被占用，程序会自动尝试后续端口，并在终端输出实际地址。
 
-## WebUI Workflow
+## WebUI 使用方式
 
-After opening the WebUI, you can complete the normal workflow without returning to the command line:
+启动 WebUI 后，常规流程都可以在页面里完成：
 
-1. Fill in the thesis title, API Base, API Key, model, timeout, and generation interval.
-2. Upload reference materials into `user_data/`.
-3. Edit, import, or auto-generate `thesis/style.md`.
-4. Click **Start Full Workflow** to generate the resource index, outline, subsection plan, thesis draft, and Word output.
-5. Watch progress and live thesis preview as each subsection is generated.
-6. Use pause/resume if you want generation to stop after the current subsection.
+1. 填写论文题目、API Base、API Key、模型、超时时间和小节间隔。
+2. 上传论文相关资料到 `user_data/`。
+3. 编辑、导入或自动生成 `thesis/style.md` 写作规范。
+4. 点击“开始完整流程”。
+5. 在页面右侧查看任务输出和实时论文预览。
+6. 需要停下时点击“暂停”，当前小节完成后会停在下一小节之前。
+7. 生成完成后点击“构建 Word”，得到最终文档。
 
-The WebUI saves private settings such as API keys to:
+WebUI 保存的私有配置会写入：
 
 ```text
 configs/local.yaml
 ```
 
-This file is ignored by git.
+这个文件已经被 `.gitignore` 忽略，不会默认上传到 GitHub。
 
-## What To Upload
+## 应该上传哪些资料
 
-Put thesis-related materials in `user_data/`, or upload them through the WebUI.
+可以把资料放入 `user_data/`，也可以通过 WebUI 上传。
 
-Useful examples:
+推荐上传：
 
-- task book, proposal, mid-term report, school formatting rules
-- reference papers, BibTeX files, literature notes
-- simulation files, experiment logs, tables, CSV data
-- circuit diagrams, flowcharts, figures, prototype photos
-- previous thesis examples or school-provided Word templates
+- 任务书、开题报告、中期报告、学校格式规范
+- 参考论文、BibTeX、文献笔记
+- 仿真文件、实验数据、CSV/Excel 表格
+- 原理图、流程图、实物照片、结果图片
+- 学校提供的 Word 模板或往届论文范例
 
-Text-like files are sampled directly. PDF, Word, image, and other binary files are currently used as file-name and path evidence unless you provide extracted text.
+目前文本类文件会被直接抽取片段。PDF、Word、图片等二进制文件会先作为文件名和路径线索使用；如果希望模型读取其中内容，建议先把关键内容整理成 Markdown/TXT 放入 `user_data/`。
 
-## API Configuration
+## API 配置
 
-The WebUI is the easiest place to configure API settings. For manual configuration, copy or create:
+最简单的方式是在 WebUI 中填写 API 信息。
+
+如果想手动配置，可以复制示例文件：
 
 ```bash
 cp configs/local.example.yaml configs/local.yaml
 ```
 
-Then edit `configs/local.yaml`:
+然后编辑 `configs/local.yaml`：
 
 ```yaml
 project:
-  title: "Your thesis title"
+  title: "你的论文题目"
 
 engines:
   generation:
     providers:
       writer:
         api_base: "https://api.openai.com/v1"
-        api_key: "your API key"
+        api_key: "你的 API Key"
         model: "gpt-4o-mini"
     batch:
       max_sections_per_run: 0
@@ -115,11 +118,18 @@ engines:
       request_timeout_seconds: 180
 ```
 
-`max_sections_per_run: 0` means `generate --all` will serially generate all pending subsections. Use a positive number if you want a single run to stop after a fixed number of subsections.
+说明：
 
-## Command Line Usage
+- `max_sections_per_run: 0` 表示 `generate --all` 会连续串行生成所有未完成小节。
+- 如果想限制单次最多生成 3 个小节，可以设为 `3`。
+- `sleep_seconds` 是两个小节请求之间的等待时间。
+- `request_timeout_seconds` 是单次 API 请求超时时间。
 
-The WebUI covers the common workflow, but every step is also available from the command line.
+## 命令行用法
+
+WebUI 覆盖了常用操作，但所有步骤也可以用命令行运行。
+
+完整流程：
 
 ```bash
 python workflow.py init
@@ -131,22 +141,22 @@ python workflow.py generate --all
 python workflow.py build
 ```
 
-Common commands:
+常用命令：
 
 ```bash
-python workflow.py status                 # show progress
-python workflow.py generate               # generate the next pending subsection
-python workflow.py generate --all         # generate all pending subsections serially
+python workflow.py status                 # 查看进度
+python workflow.py generate               # 生成下一个未完成小节
+python workflow.py generate --all         # 串行生成全部未完成小节
 python workflow.py generate --all --max-sections 3
-python workflow.py pause                  # pause before the next subsection
-python workflow.py resume                 # clear pause flag
-python workflow.py build --no-assemble    # export existing output/thesis.md
-python workflow.py ui --port 8766
+python workflow.py pause                  # 当前小节完成后暂停
+python workflow.py resume                 # 取消暂停
+python workflow.py build --no-assemble    # 只导出已有 output/thesis.md
+python workflow.py ui --port 8766         # 指定 WebUI 端口
 ```
 
-## Outputs
+## 输出文件
 
-Generated results are written to:
+最终结果：
 
 ```text
 output/thesis.md
@@ -154,7 +164,7 @@ output/thesis.docx
 output/quality_gate_report.md
 ```
 
-Intermediate generated files include:
+中间文件：
 
 ```text
 user_data/resources.md
@@ -165,47 +175,47 @@ thesis/sections/
 thesis/logs/
 ```
 
-These files are personal or generated and are ignored by default.
+这些文件与个人资料或生成内容有关，默认不会提交到版本库。
 
-## Project Structure
+## 项目结构
 
 ```text
 configs/
-  default.yaml              shared default config
-  local.example.yaml        example private config
+  default.yaml              公共默认配置
+  local.example.yaml        私有配置示例
 
 template/
-  reference.docx            Word style reference document
+  reference.docx            Word 样式模板
 
 thesis/
-  style.md                  writing and formatting rules
-  sections/                 generated subsection Markdown files
-  logs/                     workflow logs
+  style.md                  写作与格式规范
+  sections/                 生成的小节 Markdown
+  logs/                     运行日志
 
 user_data/
-  README.md                 placeholder for private materials
+  README.md                 个人资料目录占位说明
 
 workflows/
-  write/                    outline, style, resource, section generation
-  export_docx/              Markdown to Word export pipeline
-  review/                   review and quality-check workflow
-  webui/                    local WebUI
+  write/                    资料、规范、大纲、小节生成
+  export_docx/              Markdown 到 Word 的导出流程
+  review/                   质量检查与审阅流程
+  webui/                    本地 WebUI
 
 output/
-  .gitkeep                  generated outputs are ignored
+  .gitkeep                  输出目录占位，生成物默认忽略
 ```
 
-## Safety And Privacy
+## 隐私与安全
 
-- Do not commit `configs/local.yaml`; it may contain API keys.
-- Do not commit personal materials in `user_data/`.
-- Do not commit generated thesis drafts in `thesis/sections/` or `output/`.
-- If an API key was ever committed or shared publicly, rotate it in your provider dashboard.
-- The model can make mistakes. Treat generated thesis text as a draft and verify claims, data, references, formulas, and formatting before submission.
+- 不要提交 `configs/local.yaml`，它可能包含 API Key。
+- 不要提交 `user_data/` 中的个人资料。
+- 不要提交 `thesis/sections/` 或 `output/` 中的生成论文。
+- 如果 API Key 曾经写入公开仓库或公开聊天，请到服务商后台重置。
+- AI 生成内容必须人工核查，尤其是数据、公式、引用、实验结论和学校格式要求。
 
-## GitHub Publishing Checklist
+## 上传 GitHub 前检查
 
-Files that should normally be committed:
+通常应该提交：
 
 ```text
 README.md
@@ -221,12 +231,12 @@ user_data/README.md
 .gitignore
 ```
 
-Files that should stay local:
+应该留在本地：
 
 ```text
 configs/local.yaml
 .venv/
-user_data/ personal files
+user_data/ 个人资料
 thesis/outline.md
 thesis/section_plan.json
 thesis/state.json
@@ -235,6 +245,12 @@ thesis/logs/
 output/
 ```
 
+## 是否需要 Node.js/npm
+
+当前 WebUI 使用 Python 标准库实现，不需要 Node.js 和 npm。这样安装更轻量，适合直接在 WSL 或 Linux 上运行。
+
+如果后续要做更复杂的交互，比如拖拽式文件管理、富文本预览、可视化章节编辑器、多页面路由等，可以再引入 Vite/React 或其他前端工具链。届时 README 会补充 Node.js/npm 的安装和构建步骤。
+
 ## License
 
-See [LICENSE](LICENSE).
+见 [LICENSE](LICENSE)。
