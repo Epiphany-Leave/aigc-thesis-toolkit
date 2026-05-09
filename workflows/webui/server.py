@@ -14,7 +14,7 @@ import time
 import yaml
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 
 WORK = Path(__file__).resolve().parents[2]
@@ -29,6 +29,7 @@ STYLE_FILE = WORK / "thesis" / "style.md"
 USER_DATA_DIR = WORK / "user_data"
 PHOTO_DIR = WORK / "workflows" / "webui" / "photo"
 PREVIEW_LIMIT = 60000
+USER_FILE_PREVIEW_LIMIT = 20
 
 
 class Runner:
@@ -206,7 +207,7 @@ def update_style(values):
 def save_style_upload(content_type, body):
     marker = "boundary="
     if marker not in content_type:
-        return
+        return {"saved": False, "message": "没有收到可导入的写作规范文件。"}
     boundary = content_type.split(marker, 1)[1].strip().strip('"').encode()
     delimiter = b"--" + boundary
     STYLE_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -224,23 +225,32 @@ def save_style_upload(content_type, body):
         except UnicodeDecodeError:
             text = content.decode("utf-8", errors="replace")
         STYLE_FILE.write_text(text.strip() + "\n", encoding="utf-8")
-        return
+        return {"saved": True, "message": "已导入写作规范到 thesis/style.md。"}
+    return {"saved": False, "message": "没有选择写作规范文件，未导入。"}
 
 
 def list_user_files():
     if not USER_DATA_DIR.exists():
-        return []
+        return {"items": [], "total": 0, "total_size": 0, "hidden": 0}
     files = []
+    total_size = 0
     for path in sorted(USER_DATA_DIR.rglob("*")):
         if path.is_dir():
             continue
+        size = path.stat().st_size
+        total_size += size
         files.append(
             {
                 "path": path.relative_to(USER_DATA_DIR).as_posix(),
-                "size": path.stat().st_size,
+                "size": size,
             }
         )
-    return files
+    return {
+        "items": files[:USER_FILE_PREVIEW_LIMIT],
+        "total": len(files),
+        "total_size": total_size,
+        "hidden": max(0, len(files) - USER_FILE_PREVIEW_LIMIT),
+    }
 
 
 def read_text_file(path):
@@ -316,10 +326,12 @@ def render_markdown(markdown):
 def save_upload(content_type, body):
     marker = "boundary="
     if marker not in content_type:
-        return
+        return {"saved": 0, "skipped": 0, "message": "没有收到文件或文件夹。"}
     boundary = content_type.split(marker, 1)[1].strip().strip('"').encode()
     delimiter = b"--" + boundary
     USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    saved = 0
+    skipped = 0
     for part in body.split(delimiter):
         if b"Content-Disposition:" not in part or b"filename=" not in part:
             continue
@@ -333,9 +345,11 @@ def save_upload(content_type, body):
             if segment.startswith("filename="):
                 filename = segment.split("=", 1)[1].strip().strip('"')
         if not filename:
+            skipped += 1
             continue
         safe_path = safe_relative_upload_path(filename)
         if safe_path is None:
+            skipped += 1
             continue
         content = content.rstrip(b"\r\n")
         if content.endswith(b"--"):
@@ -343,6 +357,15 @@ def save_upload(content_type, body):
         target = USER_DATA_DIR / safe_path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
+        saved += 1
+    if saved:
+        summary = list_user_files()
+        return {
+            "saved": saved,
+            "skipped": skipped,
+            "message": f"已导入 {saved} 个文件；当前 user_data 共 {summary['total']} 个文件。",
+        }
+    return {"saved": 0, "skipped": skipped, "message": "没有选择文件或文件夹，未导入。"}
 
 
 def safe_relative_upload_path(filename):
@@ -380,7 +403,7 @@ def set_pause(paused):
         PAUSE_FILE.unlink()
 
 
-def render_page():
+def render_page(notice=""):
     data = status_payload()
     percent = 0 if not data["total"] else round(data["done"] * 100 / data["total"])
     current = data["current"] or {}
@@ -399,8 +422,9 @@ def render_page():
     running_text = "运行中" if runner["running"] else "空闲"
     paused_text = "已请求暂停" if data["paused"] else "未暂停"
     settings = data["config"]
+    file_summary = data["user_files"]
     user_files = "\n".join(
-        f"<tr><td>{html.escape(item['path'])}</td><td>{item['size']}</td></tr>" for item in data["user_files"]
+        f"<tr><td>{html.escape(item['path'])}</td><td>{item['size']}</td></tr>" for item in file_summary["items"]
     )
     photos = photo_files()
     hero_photo = f"/photo/{html.escape(photos[0].name)}" if photos else ""
@@ -460,6 +484,7 @@ def render_page():
     .preview p {{ margin: 8px 0; }}
     .muted {{ color: #826f9f; }}
     .toolbar-note {{ color: #6b5a84; margin: -8px 0 14px; font-size: 13px; }}
+    .notice {{ margin: 18px 0 0; border: 1px solid rgba(87,184,123,.35); background: rgba(226,255,235,.86); color: #24543a; border-radius: 12px; padding: 11px 14px; font-weight: 700; }}
     .upload-zone {{ border: 2px dashed #d59bea; border-radius: 16px; padding: 18px; background: linear-gradient(135deg, rgba(255,255,255,.9), rgba(255,232,246,.75)); }}
     .examples {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; color: #5f4f79; font-size: 13px; }}
     .example {{ background: rgba(255,255,255,.7); border: 1px solid rgba(155,126,205,.22); border-radius: 10px; padding: 8px; }}
@@ -491,6 +516,7 @@ def render_page():
       <button class="danger" name="cmd" value="shutdown">关闭 WebUI</button>
     </form>
     <div class="toolbar-note">打开：终端运行 <code>python workflow.py ui</code>。关闭：点“关闭 WebUI”，或在运行它的终端按 Ctrl+C。旧后台服务可用 <code>pkill -f workflows/webui/server.py</code> 结束。</div>
+    {f'<div class="notice">{html.escape(notice)}</div>' if notice else ''}
 
     <section class="workspace">
       <div class="stack">
@@ -521,17 +547,19 @@ def render_page():
               <div class="example">仿真数据、实验数据、表格</div>
               <div class="example">原理图、流程图、实物照片</div>
             </div>
-            <p><input type="file" name="files" multiple></p>
-            <p><input type="file" name="files" webkitdirectory directory multiple></p>
-            <div class="muted">第一行用于选择多个文件；第二行用于选择整个文件夹。未选择文件时浏览器不会提交上传。</div>
+            <p><label>选择零散文件</label><input type="file" name="files" multiple></p>
+            <p><label>选择整个文件夹</label><input type="file" name="files" webkitdirectory directory multiple></p>
+            <div class="muted">两个入口共用同一个“上传文件”按钮；可以一次性导入多文件，也可以一次性导入一个文件夹。</div>
             <div class="actions"><button class="primary">上传文件</button></div>
           </form>
           <div class="panel">
             <h3>已有资料</h3>
+            <div class="muted">共 {file_summary['total']} 个文件，约 {file_summary['total_size']} bytes。这里只显示前 {USER_FILE_PREVIEW_LIMIT} 个，避免大文件夹刷屏。</div>
             <table>
               <thead><tr><th>文件</th><th>大小 bytes</th></tr></thead>
               <tbody>{user_files or '<tr><td colspan="2">尚未上传资料</td></tr>'}</tbody>
             </table>
+            {f'<div class="muted">还有 {file_summary["hidden"]} 个文件未在列表中展开显示。</div>' if file_summary["hidden"] else ''}
           </div>
         </section>
 
@@ -640,29 +668,35 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path.startswith("/photo/"):
             self.send_file(PHOTO_DIR / Path(parsed.path).name)
             return
-        self.send_html(render_page())
+        notice = parse_qs(parsed.query).get("notice", [""])[0]
+        self.send_html(render_page(notice=notice))
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0"))
         raw_body = self.rfile.read(length)
         parsed = urlparse(self.path)
+        notice = ""
         if parsed.path == "/upload":
-            save_upload(self.headers.get("Content-Type", ""), raw_body)
+            notice = save_upload(self.headers.get("Content-Type", ""), raw_body)["message"]
         elif parsed.path == "/style-upload":
-            save_style_upload(self.headers.get("Content-Type", ""), raw_body)
+            notice = save_style_upload(self.headers.get("Content-Type", ""), raw_body)["message"]
         else:
             body = raw_body.decode("utf-8")
             values = parse_qs(body)
             if parsed.path == "/settings":
                 update_settings(values)
+                notice = "配置已保存。"
             elif parsed.path == "/style":
                 update_style(values)
+                notice = "写作规范已保存。"
             else:
                 cmd = values.get("cmd", [""])[0]
                 if cmd == "pause":
                     set_pause(True)
+                    notice = "已请求暂停：当前小节完成后会停在下一小节之前。"
                 elif cmd == "resume":
                     set_pause(False)
+                    notice = "已恢复生成。"
                 elif cmd == "shutdown":
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -671,9 +705,10 @@ class Handler(BaseHTTPRequestHandler):
                     threading.Thread(target=self.server.shutdown, daemon=True).start()
                     return
                 else:
-                    run_command(cmd)
+                    ok, message = run_command(cmd)
+                    notice = message
         self.send_response(303)
-        self.send_header("Location", "/")
+        self.send_header("Location", f"/?notice={quote(notice)}")
         self.end_headers()
 
     def send_html(self, content):
