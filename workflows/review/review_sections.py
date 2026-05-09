@@ -203,6 +203,7 @@ def main():
         f"- 时间：{dt.datetime.now():%Y-%m-%d %H:%M:%S}",
         f"- 模型：{model}",
         f"- 策略：按章节串行审阅，超过 {max_chars} 字符自动切块，避免一次性审阅整篇导致 API 卡死。",
+        "- 产物：本脚本生成 review 报告与日志；workflow.py review 会在审阅完成后重新构建 output/thesis.docx。",
     ]
 
     for item, path, content in rows:
@@ -212,6 +213,7 @@ def main():
         report_parts.append(f"\n# {title}")
         report_parts.append(f"- 文件：{path.relative_to(WORK).as_posix()}")
         for index, chunk in enumerate(chunks, start=1):
+            print(f"REVIEW CHUNK: {item.get('id')} {index}/{len(chunks)}")
             messages = build_prompt(item, chunk, index, len(chunks), dimensions)
             result = chat_completion(base, key, model, messages, timeout=timeout)
             report_parts.append(f"\n## 分块 {index}/{len(chunks)}")

@@ -133,7 +133,49 @@ def 审阅论文(参数):
         命令.extend(["--only", 参数.only])
     if 参数.max_chars:
         命令.extend(["--max-chars", str(参数.max_chars)])
-    return 运行命令(命令)
+    退出码 = 运行命令(命令)
+    if 退出码 != 0:
+        return 退出码
+    print("Review 完成，开始重新构建 Word 文档。")
+    return 运行命令([sys.executable, "workflow.py", "build"])
+
+
+def 清空目录内容(目录):
+    目录.mkdir(parents=True, exist_ok=True)
+    for 路径 in 目录.iterdir():
+        if 路径.name == ".gitkeep":
+            continue
+        if 路径.is_dir():
+            shutil.rmtree(路径)
+        else:
+            路径.unlink(missing_ok=True)
+
+
+def 重置工程(参数):
+    if not 参数.yes:
+        print("此操作会删除 user_data、已生成章节、输出文件、大纲、计划、状态和日志。确认请追加 --yes。")
+        return 1
+
+    清空目录内容(工程根目录 / "user_data")
+    清空目录内容(工程根目录 / "thesis" / "sections")
+    清空目录内容(工程根目录 / "thesis" / "logs")
+    清空目录内容(工程根目录 / "output")
+
+    for 路径 in [
+        工程根目录 / "thesis" / "outline.md",
+        工程根目录 / "thesis" / "section_plan.json",
+        工程根目录 / "thesis" / "state.json",
+        工程根目录 / "thesis" / "pause.flag",
+        工程根目录 / "user_data" / "resources.md",
+    ]:
+        路径.unlink(missing_ok=True)
+
+    if 参数.reset_style:
+        (工程根目录 / "thesis" / "style.md").unlink(missing_ok=True)
+        初始化工程(argparse.Namespace())
+
+    print("已重置：生成内容、输出文件、日志和 user_data 已清空。configs/local.yaml 与 API 配置已保留。")
+    return 0
 
 
 def 启动界面(参数):
@@ -250,6 +292,11 @@ def 主函数():
     审阅.add_argument("--only", help="只审阅指定 section id 或章节文件")
     审阅.add_argument("--max-chars", type=int, default=None, help="单次 review 请求最大字符数")
     审阅.set_defaults(func=审阅论文)
+
+    重置 = 子命令.add_parser("reset", help="清空生成内容、输出文件、日志和 user_data，开始新论文")
+    重置.add_argument("--yes", action="store_true", help="确认执行重置")
+    重置.add_argument("--reset-style", action="store_true", help="同时重置 thesis/style.md")
+    重置.set_defaults(func=重置工程)
 
     界面 = 子命令.add_parser("ui", help="启动本地 WebUI")
     界面.add_argument("--port", type=int, default=8765, help="WebUI 端口")

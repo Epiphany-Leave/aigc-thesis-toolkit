@@ -13,7 +13,7 @@ AIGC Thesis Toolkit 是一个本地运行的 AI 论文写作工作流。
 
 - **本地 WebUI 工作台**：在浏览器里配置 API、上传资料、编辑/导入写作规范、启动生成、暂停/继续、查看进度和实时预览正文。
 - **支持 OpenAI 兼容接口**：只要服务兼容 Chat Completions 格式，就可以通过 `api_base`、`api_key`、`model` 接入。
-- **自动资料索引**：扫描 `user_data/`，生成 `user_data/resources.md`，让模型知道有哪些可用资料。
+- **自动资料索引**：扫描 `user_data/`，对可读资料逐文件/分块调用 AI 提取事实，再生成 `user_data/resources.md`。
 - **自动写作规范**：可以从学校模板、任务书、开题报告、论文范例等资料中生成 `thesis/style.md`，也可以手动导入。
 - **按章高质量生成**：默认把论文大纲拆成章节任务，一章生成完成后再进入下一章，用更高 token 消耗换取更好的上下文一致性。
 - **可暂停、可续写**：生成进度记录在 `thesis/section_plan.json`，已经完成的章节默认不会重复生成。
@@ -166,7 +166,8 @@ thesis/style.md
 - “重建大纲”：根据资料和规范重新生成 `thesis/outline.md`。
 - “写作计划”：根据大纲生成 `thesis/section_plan.json`。
 - “构建 Word”：把 Markdown 合并并导出 `output/thesis.docx`。
-- “论文 Review”：按章节串行审阅论文，章节过长会自动切块，输出 `output/review_results.md` 和 `thesis/logs/review_*.md`。
+- “Review 并导出”：按章节串行审阅论文，章节过长会自动切块，输出 `output/review_results.md` 和 `thesis/logs/review_*.md`，完成后重新构建 `output/thesis.docx`。
+- “一键重置”：清空 `user_data/`、已生成章节、输出文件、日志、大纲和计划，保留 API 配置，用于开始一篇新论文。
 - “关闭 WebUI”：关闭本地 Python 服务。
 
 右侧面板可以查看：
@@ -187,7 +188,7 @@ thesis/style.md
 4. 在 WebUI 中保存 API 配置。
 5. 导入资料文件或资料文件夹。
 6. 点击“自动规范”或手动编辑 `style.md`。
-7. 点击“资料索引”。
+7. 点击“资料索引”。这一步会对可读取资料逐文件/分块调用 AI 提取关键信息，再汇总成 `user_data/resources.md`。
 8. 点击“重建大纲”。
 9. 点击“写作计划”。
 10. 点击“继续生成”或“开始完整流程”。
@@ -209,7 +210,7 @@ thesis/style.md
 
 为了减少“瞎写”，建议把资料分成两类：
 
-- **模型可直接读取的核心资料**：Markdown、TXT、CSV、BibTeX、LaTeX、JSON、YAML、DOCX、XLSX。系统会尽量抽取这些文件中的文本或表格片段，写入 `user_data/resources.md`。
+- **模型可直接读取的核心资料**：Markdown、TXT、CSV、BibTeX、LaTeX、JSON、YAML、DOCX、XLSX。系统会尽量抽取这些文件中的文本或表格片段，并逐文件/分块调用 AI 提取事实，写入 `user_data/resources.md`。
 - **模型只能作为文件名线索的资料**：PDF 扫描件、图片、原理图截图、仿真工程文件、压缩包、二进制文件。系统通常不能直接理解其中内容，只会知道文件名、路径和大小。
 
 如果关键资料在 PDF、图片或仿真软件里，建议额外整理一个文本说明文件，例如：
@@ -231,6 +232,14 @@ user_data/hardware_parameters.md
 - 不能确定的数据和结论也要明确写“未知”或“待测”
 
 资料越具体，生成内容越不容易凭空补造。只上传图片、PDF 或工程文件而没有文字说明时，模型很容易只能根据文件名猜测。
+
+如果你要开始新的论文，可以在 WebUI 点击“一键重置”，或运行：
+
+```bash
+python workflow.py reset --yes
+```
+
+该命令会清空生成内容和已导入资料，但会保留 `configs/local.yaml` 中的 API 配置。
 
 WebUI 中的资料列表只显示文件总数、总大小和前若干个文件预览，避免大文件夹上传后刷屏。完整文件仍会保存到 `user_data/`。
 
@@ -299,7 +308,8 @@ python workflow.py generate --all --max-sections 3
 python workflow.py pause                  # 当前写作单元完成后暂停
 python workflow.py resume                 # 取消暂停
 python workflow.py build --no-assemble    # 只导出已有 output/thesis.md
-python workflow.py review                 # 按章节/分块审阅论文
+python workflow.py review                 # 按章节/分块审阅论文，并重新构建 Word
+python workflow.py reset --yes            # 清空生成内容和 user_data，开始新论文
 python workflow.py ui --port 8766         # 指定 WebUI 端口
 ```
 

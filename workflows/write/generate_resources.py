@@ -19,6 +19,8 @@ CONFIG_FILE = WORK / "configs" / "default.yaml"
 LOCAL_CONFIG_FILE = WORK / "configs" / "local.yaml"
 TEXT_SUFFIXES = {".md", ".txt", ".csv", ".bib", ".tex", ".json", ".yaml", ".yml", ".log"}
 OFFICE_TEXT_SUFFIXES = {".docx", ".xlsx"}
+MAX_EXTRACT_CHARS_PER_FILE = 32000
+MAX_EXTRACT_CHARS_PER_CHUNK = 8000
 
 
 def load_config():
@@ -61,6 +63,13 @@ def read_text_sample(path, limit=8000):
         return ""
 
 
+def read_text_content(path, limit=MAX_EXTRACT_CHARS_PER_FILE):
+    try:
+        return path.read_text(encoding="utf-8-sig", errors="ignore")[:limit]
+    except OSError:
+        return ""
+
+
 def xml_text(path, names, limit=12000):
     parts = []
     try:
@@ -79,11 +88,11 @@ def xml_text(path, names, limit=12000):
     return "\n".join(parts)[:limit]
 
 
-def read_docx_sample(path, limit=12000):
+def read_docx_sample(path, limit=MAX_EXTRACT_CHARS_PER_FILE):
     return xml_text(path, ["word/document.xml"], limit=limit)
 
 
-def read_xlsx_sample(path, limit=12000):
+def read_xlsx_sample(path, limit=MAX_EXTRACT_CHARS_PER_FILE):
     names = ["xl/sharedStrings.xml"]
     try:
         with zipfile.ZipFile(path) as archive:
@@ -102,11 +111,11 @@ def read_office_sample(path):
     return ""
 
 
-def scan_user_data(user_data_dir):
-    if not user_data_dir.exists():
-        return "user_data 目录不存在。"
-
+def scan_user_data_entries(user_data_dir):
     entries = []
+    if not user_data_dir.exists():
+        return entries
+
     for path in sorted(user_data_dir.rglob("*")):
         if path.is_dir() or path.name == "resources.md":
             continue
@@ -114,20 +123,49 @@ def scan_user_data(user_data_dir):
         suffix = path.suffix.lower()
         size = path.stat().st_size if path.exists() else 0
         if suffix in TEXT_SUFFIXES:
-            sample = read_text_sample(path)
-            entries.append(f"## {relative}\n类型：文本；大小：{size} bytes\n\n{sample}")
+            content = read_text_content(path)
+            entries.append({"path": relative, "type": "文本", "size": size, "content": content, "readable": True})
         elif suffix in OFFICE_TEXT_SUFFIXES:
             sample = read_office_sample(path)
             if sample.strip():
-                entries.append(f"## {relative}\n类型：Office 可抽取文本；大小：{size} bytes\n\n{sample}")
+                entries.append({"path": relative, "type": "Office 可抽取文本", "size": size, "content": sample, "readable": True})
             else:
-                entries.append(f"## {relative}\n类型：Office 文件；大小：{size} bytes；未能抽取正文，只能作为文件名线索。\n")
+                entries.append({"path": relative, "type": "Office 文件", "size": size, "content": "", "readable": False})
         else:
-            entries.append(f"## {relative}\n类型：二进制/Office/PDF/图片等；大小：{size} bytes\n")
+            entries.append({"path": relative, "type": "二进制/PDF/图片/工程文件", "size": size, "content": "", "readable": False})
+    return entries
+
+
+def scan_user_data(user_data_dir):
+    entries = scan_user_data_entries(user_data_dir)
 
     if not entries:
         return "user_data 目录为空。"
-    return "\n\n".join(entries)[:70000]
+    rendered = []
+    for entry in entries:
+        if entry["readable"]:
+            rendered.append(f"## {entry['path']}\n类型：{entry['type']}；大小：{entry['size']} bytes\n\n{entry['content'][:8000]}")
+        else:
+            rendered.append(f"## {entry['path']}\n类型：{entry['type']}；大小：{entry['size']} bytes；未能抽取正文，只能作为文件名线索。\n")
+    return "\n\n".join(rendered)[:70000]
+
+
+def split_text(text, max_chars=MAX_EXTRACT_CHARS_PER_CHUNK):
+    if len(text) <= max_chars:
+        return [text]
+    chunks = []
+    current = []
+    size = 0
+    for part in re.split(r"(\n\s*\n)", text):
+        if size + len(part) > max_chars and current:
+            chunks.append("".join(current).strip())
+            current = []
+            size = 0
+        current.append(part)
+        size += len(part)
+    if current:
+        chunks.append("".join(current).strip())
+    return [chunk for chunk in chunks if chunk]
 
 
 def build_messages(project_title, inventory):
@@ -157,6 +195,65 @@ def build_messages(project_title, inventory):
 """,
         },
     ]
+
+
+def build_extract_messages(project_title, entry, chunk, index, total):
+    return [
+        {
+            "role": "system",
+            "content": (
+                "你是论文资料深度提取助手。你需要从单个 user_data 文件片段中提取可用于论文写作的事实。"
+                "只输出 Markdown，不扩写正文，不编造不存在的信息。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"""论文题目：{project_title}
+
+文件路径：{entry['path']}
+文件类型：{entry['type']}
+片段：{index}/{total}
+
+请提取：
+- 与课题直接相关的事实、参数、器件型号、实验条件、测试数据、结论
+- 可作为图表、公式、章节内容依据的信息
+- 文件中明确提到但仍需人工核查的点
+- 资料缺口
+
+要求：
+1. 每条都保留文件路径。
+2. 不要写泛泛而谈的总结。
+3. 不要补造文件里没有的数据。
+
+文件片段：
+{chunk}
+""",
+        },
+    ]
+
+
+def ai_extract_inventory(config, entries, base, key, model, timeout):
+    project_title = config.get("project", {}).get("title", "")
+    parts = ["# AI 资料抽取结果"]
+    for entry in entries:
+        if not entry["readable"] or not entry["content"].strip():
+            parts.append(
+                f"## {entry['path']}\n- 类型：{entry['type']}\n- 状态：未能抽取正文，只能作为文件名和路径线索。"
+            )
+            continue
+        chunks = split_text(entry["content"])
+        parts.append(f"## {entry['path']}\n- 类型：{entry['type']}\n- 大小：{entry['size']} bytes")
+        for index, chunk in enumerate(chunks, start=1):
+            print(f"EXTRACT: {entry['path']} {index}/{len(chunks)}")
+            extracted = chat_completion(
+                base,
+                key,
+                model,
+                build_extract_messages(project_title, entry, chunk, index, len(chunks)),
+                timeout,
+            )
+            parts.append(f"\n### 片段 {index}/{len(chunks)}\n{extracted}")
+    return "\n\n".join(parts)[:120000]
 
 
 def chat_completion(base, key, model, messages, timeout):
@@ -190,9 +287,10 @@ def main():
         return 0
 
     user_data_dir.mkdir(parents=True, exist_ok=True)
-    inventory = scan_user_data(user_data_dir)
     base, key, model = api_config(config)
     timeout = int(config.get("engines", {}).get("generation", {}).get("batch", {}).get("request_timeout_seconds", 180))
+    entries = scan_user_data_entries(user_data_dir)
+    inventory = ai_extract_inventory(config, entries, base, key, model, timeout) if entries else "user_data 目录为空。"
     content = chat_completion(
         base,
         key,

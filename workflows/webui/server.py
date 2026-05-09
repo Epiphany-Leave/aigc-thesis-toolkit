@@ -465,10 +465,27 @@ def run_command(name):
         "plan": [sys.executable, "workflow.py", "plan", "--overwrite-state"],
         "build": [sys.executable, "workflow.py", "build"],
         "review": [sys.executable, "workflow.py", "review"],
+        "reset": [sys.executable, "workflow.py", "reset", "--yes"],
+    }
+    messages = {
+        "review": "Review 已启动：会按章节/分块串行检测，生成 review 报告和日志，完成后重新构建 thesis.docx。",
+        "reset": "重置已启动：会清空 user_data、已生成章节、输出文件和日志，保留 API 配置。",
     }
     if name not in commands:
         return False, "未知命令"
-    return RUNNER.start(commands[name])
+    ok, message = RUNNER.start(commands[name])
+    return ok, messages.get(name, message) if ok else message
+
+
+def frontend_sources_newer_than_dist():
+    index = FRONTEND_DIST / "index.html"
+    source_root = WORK / "workflows" / "webui" / "frontend" / "src"
+    if not index.exists() or not source_root.exists():
+        return False
+    dist_mtime = index.stat().st_mtime
+    watched = [WORK / "workflows" / "webui" / "frontend" / "package.json"]
+    watched.extend(path for path in source_root.rglob("*") if path.is_file())
+    return any(path.stat().st_mtime > dist_mtime for path in watched if path.exists())
 
 
 def set_pause(paused):
@@ -512,6 +529,12 @@ def render_page(notice=""):
         for item in data.get("downloads", [])
     )
     latest_log = html.escape(data.get("latest_log", "") or "暂无日志内容")
+    stale_frontend_warning = (
+        '<div class="notice">React WebUI 构建产物已过期。请运行 '
+        '<code>cd workflows/webui/frontend && npm run build</code> 后重启 WebUI。</div>'
+        if frontend_sources_newer_than_dist()
+        else ""
+    )
     outline_html = (
         render_markdown(data["outline"])
         if data["outline"]
@@ -598,10 +621,12 @@ def render_page(notice=""):
       <button name="cmd" value="plan">重建写作计划</button>
       <button name="cmd" value="build">构建 Word</button>
       <button name="cmd" value="review">论文 Review</button>
+      <button class="danger" name="cmd" value="reset" onclick="return confirm('确认清空 user_data、生成章节、输出文件和日志？API 配置会保留。')">一键重置</button>
       <button class="danger" name="cmd" value="shutdown">关闭 WebUI</button>
     </form>
     <div class="toolbar-note">打开：终端运行 <code>python workflow.py ui</code>。关闭：点“关闭 WebUI”，或在运行它的终端按 Ctrl+C。旧后台服务可用 <code>pkill -f workflows/webui/server.py</code> 结束。</div>
     {f'<div class="notice">{html.escape(notice)}</div>' if notice else ''}
+    {stale_frontend_warning}
 
     <section class="workspace">
       <div class="stack">
@@ -766,7 +791,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_download(Path(parsed.path).name)
             return
         if parsed.path.startswith("/assets/") or parsed.path in {"/", "/index.html"}:
-            if self.try_send_frontend(parsed.path):
+            if not frontend_sources_newer_than_dist() and self.try_send_frontend(parsed.path):
                 return
         notice = parse_qs(parsed.query).get("notice", [""])[0]
         self.send_html(render_page(notice=notice))
@@ -807,6 +832,9 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.write("WebUI 已关闭，可以关闭这个页面。".encode("utf-8"))
                     threading.Thread(target=self.server.shutdown, daemon=True).start()
                     return
+                elif cmd == "reset":
+                    ok, message = run_command(cmd)
+                    notice = message
                 else:
                     ok, message = run_command(cmd)
                     notice = message
@@ -850,6 +878,10 @@ class Handler(BaseHTTPRequestHandler):
             elif cmd == "shutdown":
                 self.send_json({"ok": True, "message": "WebUI 已关闭。"})
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
+                return
+            elif cmd == "reset":
+                ok, notice = run_command(cmd)
+                self.send_json({"ok": ok, "message": notice, "status": status_payload()})
                 return
             else:
                 ok, notice = run_command(cmd)
