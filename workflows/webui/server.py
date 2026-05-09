@@ -507,6 +507,11 @@ def render_page(notice=""):
     photos = photo_files()
     hero_photo = f"/photo/{html.escape(photos[0].name)}" if photos else ""
     preview_html = render_markdown(data["preview"])
+    download_links = " ".join(
+        f'<a class="download-link" href="{html.escape(item["url"])}">{html.escape(item["name"])}</a>'
+        for item in data.get("downloads", [])
+    )
+    latest_log = html.escape(data.get("latest_log", "") or "暂无日志内容")
     outline_html = (
         render_markdown(data["outline"])
         if data["outline"]
@@ -566,6 +571,7 @@ def render_page(notice=""):
     .upload-zone {{ border: 2px dashed #d59bea; border-radius: 16px; padding: 18px; background: linear-gradient(135deg, rgba(255,255,255,.9), rgba(255,232,246,.75)); }}
     .examples {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; color: #5f4f79; font-size: 13px; }}
     .example {{ background: rgba(255,255,255,.7); border: 1px solid rgba(155,126,205,.22); border-radius: 10px; padding: 8px; }}
+    .download-link {{ display: inline-block; margin: 5px 8px 5px 0; padding: 7px 10px; border-radius: 999px; border: 1px solid rgba(155,126,205,.28); color: #523f7d; background: rgba(255,255,255,.78); text-decoration: none; font-weight: 700; }}
     @media (max-width: 760px) {{ .grid {{ grid-template-columns: 1fr; }} main {{ padding: 14px; }} }}
     @media (max-width: 980px) {{ .formgrid, .workspace {{ grid-template-columns: 1fr; }} }}
   </style>
@@ -591,6 +597,7 @@ def render_page(notice=""):
       <button name="cmd" value="outline">重建大纲</button>
       <button name="cmd" value="plan">重建写作计划</button>
       <button name="cmd" value="build">构建 Word</button>
+      <button name="cmd" value="review">论文 Review</button>
       <button class="danger" name="cmd" value="shutdown">关闭 WebUI</button>
     </form>
     <div class="toolbar-note">打开：终端运行 <code>python workflow.py ui</code>。关闭：点“关闭 WebUI”，或在运行它的终端按 Ctrl+C。旧后台服务可用 <code>pkill -f workflows/webui/server.py</code> 结束。</div>
@@ -669,6 +676,11 @@ def render_page(notice=""):
         <section>
           <h2>任务输出</h2>
           <pre id="logs">{logs or "暂无输出"}</pre>
+        </section>
+        <section>
+          <h2>导出与反思日志</h2>
+          <div class="panel">{download_links or '<span class="muted">暂无可下载文件，请先构建 Word 或运行 Review。</span>'}</div>
+          <pre id="latest-log">{latest_log}</pre>
         </section>
       </div>
     </section>

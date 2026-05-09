@@ -301,15 +301,16 @@ function App() {
                 <div className="drop-zone">
                   <UploadCloud size={34} />
                   <strong>导入论文资料</strong>
-                  <span>可同时选择零散文件和整个文件夹，完成后会提示导入结果。</span>
+                  <span>优先上传可读取的 Markdown/TXT/CSV/DOCX/XLSX。PDF、图片和仿真源文件建议另存关键说明文本。</span>
                 </div>
                 <div className="upload-inputs">
                   <label>选择文件<input ref={fileInputRef} type="file" multiple /></label>
                   <label>选择文件夹<input ref={folderInputRef} type="file" webkitdirectory="true" directory="" multiple /></label>
                 </div>
                 <div className="examples">
-                  <span>开题报告</span><span>学校规范</span><span>参考论文</span><span>仿真数据</span><span>实验表格</span><span>原理图</span>
+                  <span>任务书/开题报告 DOCX</span><span>学校规范 TXT/MD</span><span>参考文献 BibTeX</span><span>实验数据 CSV/XLSX</span><span>仿真结果表格</span><span>硬件参数说明 MD</span>
                 </div>
+                <p className="muted">模型无法可靠读取纯图片、PDF 扫描件和工程二进制文件。请把关键参数、测试数据、实验现象、图表含义整理成文本文件一起上传。</p>
                 <button className="primary"><UploadCloud size={16} />上传资料</button>
               </form>
               <div className="file-summary">

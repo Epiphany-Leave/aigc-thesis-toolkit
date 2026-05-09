@@ -4,9 +4,12 @@
 import argparse
 import json
 import os
+import re
 import urllib.error
 import urllib.request
+import zipfile
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 import yaml
 
@@ -15,6 +18,7 @@ WORK = Path(__file__).resolve().parents[2]
 CONFIG_FILE = WORK / "configs" / "default.yaml"
 LOCAL_CONFIG_FILE = WORK / "configs" / "local.yaml"
 TEXT_SUFFIXES = {".md", ".txt", ".csv", ".bib", ".tex", ".json", ".yaml", ".yml"}
+OFFICE_TEXT_SUFFIXES = {".docx", ".xlsx"}
 
 
 def deep_merge(base, override):
@@ -57,6 +61,38 @@ def read_text_sample(path, limit=9000):
         return ""
 
 
+def xml_text(path, names, limit=12000):
+    parts = []
+    try:
+        with zipfile.ZipFile(path) as archive:
+            for name in names:
+                if name not in archive.namelist():
+                    continue
+                root = ET.fromstring(archive.read(name))
+                texts = [node.text or "" for node in root.iter() if node.tag.endswith("}t") or node.tag.endswith("}v")]
+                if texts:
+                    parts.append(" ".join(texts))
+                if sum(len(item) for item in parts) >= limit:
+                    break
+    except (OSError, zipfile.BadZipFile, ET.ParseError):
+        return ""
+    return "\n".join(parts)[:limit]
+
+
+def read_office_sample(path):
+    if path.suffix.lower() == ".docx":
+        return xml_text(path, ["word/document.xml"])
+    if path.suffix.lower() == ".xlsx":
+        try:
+            with zipfile.ZipFile(path) as archive:
+                names = ["xl/sharedStrings.xml"]
+                names.extend(name for name in archive.namelist() if re.match(r"xl/worksheets/sheet\d+\.xml", name))
+        except (OSError, zipfile.BadZipFile):
+            return ""
+        return xml_text(path, names)
+    return ""
+
+
 def scan_user_data(user_data_dir):
     if not user_data_dir.exists():
         return "user_data 目录不存在。"
@@ -70,6 +106,12 @@ def scan_user_data(user_data_dir):
         size = path.stat().st_size if path.exists() else 0
         if suffix in TEXT_SUFFIXES:
             entries.append(f"## {relative}\n类型：文本；大小：{size} bytes\n\n{read_text_sample(path)}")
+        elif suffix in OFFICE_TEXT_SUFFIXES:
+            sample = read_office_sample(path)
+            if sample.strip():
+                entries.append(f"## {relative}\n类型：Office 可抽取文本；大小：{size} bytes\n\n{sample}")
+            else:
+                entries.append(f"## {relative}\n类型：Office 文件；大小：{size} bytes；未能抽取正文，只能作为文件名线索。\n")
         else:
             entries.append(f"## {relative}\n类型：二进制/Office/PDF/图片等；大小：{size} bytes\n")
     return "\n\n".join(entries)[:70000] if entries else "user_data 目录为空。"
@@ -110,7 +152,7 @@ user_data 扫描结果：
 1. 一级标题为“# 写作与格式规范”。
 2. 至少包含：整体文风、章节结构、标题层级、公式、图题、表题、引用、数据真实性、Word 导出注意事项。
 3. 如果资料中出现学校模板、任务书、开题报告、中期报告、范例论文，请提取其中能确定的写作规范。
-4. 对 PDF、Word、图片等无法直接读取的文件，只能依据文件名判断可能用途，不要声称已读取其中内容。
+4. 对已经抽取出文本的 Office 文件，可以基于抽取片段总结；对无法抽取文本的 PDF、图片、二进制文件，只能依据文件名判断可能用途，不要声称已读取其中内容。
 5. 不要输出代码块。
 """,
         },

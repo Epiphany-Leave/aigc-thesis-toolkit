@@ -16,12 +16,15 @@ FIGURE_PLACEHOLDER = re.compile(
 MARKDOWN_IMAGE = re.compile(r"^!\[(.*?)\]\((.*?)\)\s*$")
 HTML_IMAGE = re.compile(r"^<img\b[^>]*>\s*$", re.IGNORECASE)
 TABLE_CAPTION = re.compile(r"^:\s*表\s*([0-9]+[-－][0-9]+)\s*(.+?)\s*$")
+PLAIN_TABLE_CAPTION = re.compile(r"^\s*表\s*([0-9]+[-－][0-9]+)\s*(.+?)\s*$")
 DISPLAY_EQUATION = re.compile(r"^\s*\$\$(.*?)\$\$\s*$")
 EQUATION_NUMBER = re.compile(
     r"^(.*?)(?:\\qquad\s*)*(?:\\quad\s*)*\(\s*([0-9]+[-－][0-9]+)\s*\)\s*$"
 )
 STANDALONE_EQUATION_NUMBER = re.compile(r"^\s*\(\s*([0-9]+[-－][0-9]+)\s*\)\s*$")
 ORDERED_LIST_ITEM = re.compile(r"^(\s*)\d+[.、]\s+(.+?)\s*$")
+CHINESE_ORDERED_ITEM = re.compile(r"^\s*[（(]\s*([0-9一二三四五六七八九十]+)\s*[）)]\s*(.+?)\s*$")
+FENCE = re.compile(r"^\s*```")
 
 
 def deep_merge(base, override):
@@ -101,12 +104,26 @@ def normalize_emphasis(text):
 
 def normalize_ordered_list(line):
     match = ORDERED_LIST_ITEM.match(line)
+    if match:
+        _indent, body = match.groups()
+        index = getattr(normalize_ordered_list, "index", 0) + 1
+        normalize_ordered_list.index = index
+        return f"（{index}）{body.strip()}"
+
+    chinese_match = CHINESE_ORDERED_ITEM.match(line)
+    if not chinese_match:
+        return line
+    number, body = chinese_match.groups()
+    return f"（{number}）{body.strip()}"
+
+
+def normalize_unordered_list(line):
+    match = re.match(r"^\s*[-*]\s+(.+?)\s*$", line)
     if not match:
         return line
-    indent, body = match.groups()
     index = getattr(normalize_ordered_list, "index", 0) + 1
     normalize_ordered_list.index = index
-    return f"{indent}（{index}）{body}"
+    return f"（{index}）{match.group(1).strip()}"
 
 
 def reset_ordered_list_counter(line):
@@ -184,13 +201,13 @@ def convert_image_to_placeholder(line):
 
 
 def normalize_table_caption(line):
-    match = TABLE_CAPTION.match(line)
+    match = TABLE_CAPTION.match(line) or PLAIN_TABLE_CAPTION.match(line)
     if not match:
         return None
 
     number = normalize_number(match.group(1))
     title = match.group(2).strip()
-    return f": 表{number} {title}"
+    return f"\n表{number} {title}\n"
 
 
 def preprocess(text):
@@ -203,6 +220,14 @@ def preprocess(text):
     while index < len(source_lines):
         line = source_lines[index]
         reset_ordered_list_counter(line)
+
+        if FENCE.match(line):
+            index += 1
+            while index < len(source_lines) and not FENCE.match(source_lines[index]):
+                index += 1
+            if index < len(source_lines):
+                index += 1
+            continue
 
         if line.strip() == "$$":
             formula_lines = []
@@ -251,6 +276,7 @@ def preprocess(text):
             continue
 
         line = normalize_ordered_list(line)
+        line = normalize_unordered_list(line)
         line = normalize_emphasis(line)
         lines.append(normalize_inline_refs(line, enable_links))
         index += 1
