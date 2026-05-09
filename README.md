@@ -18,7 +18,7 @@ AIGC Thesis Toolkit 是一个本地运行的 AI 论文写作工作流。
 - **按章高质量生成**：默认把论文大纲拆成章节任务，一章生成完成后再进入下一章，用更高 token 消耗换取更好的上下文一致性。
 - **可暂停、可续写**：生成进度记录在 `thesis/section_plan.json`，已经完成的章节默认不会重复生成。
 - **稳定的导出格式**：公式编号会在导出前从公式体中拆出；插图默认保留位置、题注和说明，不直接插入图片。
-- **导出 Word**：把生成的小节合并成 `output/thesis.md`，再按 `template/reference.docx` 导出 `output/thesis.docx`。
+- **导出 Word**：把生成的章节/小节合并成 `output/thesis.md`，再按 `template/reference.docx` 导出 `output/thesis.docx`。
 - **适合上传 GitHub**：API Key、个人资料、生成正文、日志和输出文件默认不会提交。
 
 ## 工作流程
@@ -36,7 +36,7 @@ user_data/ 个人资料
 
 ## 快速开始
 
-推荐在 WSL、Linux、macOS 或其他支持 `venv` 的 Python 环境中运行。
+推荐在 WSL、Linux、macOS 或其他支持 `venv` 的 Python 环境中运行。新版 WebUI 需要 Node.js 18+ 和 npm 9+。
 
 ```bash
 git clone https://github.com/Epiphany-Leave/aigc-thesis-toolkit.git
@@ -50,7 +50,7 @@ python -m pip install -r requirements.txt
 python workflow.py init
 ```
 
-安装并构建新版 WebUI：
+安装并构建 React WebUI：
 
 ```bash
 cd workflows/webui/frontend
@@ -59,7 +59,7 @@ npm run build
 cd ../../..
 ```
 
-启动本地服务：
+启动本地服务，一个终端即可：
 
 ```bash
 python workflow.py ui
@@ -73,7 +73,17 @@ http://127.0.0.1:8765
 
 如果 `8765` 端口已被占用，程序会自动尝试后续端口，并在终端输出实际地址。
 
-开发 WebUI 时可以开两个终端：
+### 正式使用与开发模式
+
+正式使用时只需要一个终端：
+
+```bash
+python workflow.py ui
+```
+
+这条命令会启动 Python 本地后端，并直接服务已经构建好的 React 页面。日常测试论文生成、上传资料、配置 API、预览正文时，不需要运行 `npm run dev`。
+
+开发 WebUI 界面时才需要两个终端：
 
 ```bash
 # 终端 1：启动 Python 后端
@@ -84,31 +94,104 @@ cd workflows/webui/frontend
 npm run dev
 ```
 
-开发模式打开：
+然后打开：
 
 ```text
 http://127.0.0.1:5173
 ```
 
+两个终端的原因是：`npm run dev` 只负责前端热更新页面，不负责读写本地文件、调用 workflow、保存配置、上传资料或启动生成任务。这些能力仍然由 Python 后端提供。如果只运行 `npm run dev`，页面可以打开，但 API 请求没有后端响应，核心功能无法使用。
+
+如果你不开发界面，只测试核心功能，请使用：
+
+```bash
+python workflow.py ui
+```
+
 ## WebUI 使用方式
 
-启动 WebUI 后，常规流程都可以在页面里完成：
+启动 WebUI 后，常规流程都可以在页面里完成。
 
-1. 填写论文题目、API Base、API Key、模型、超时时间和章节间隔。
-2. 上传论文相关资料到 `user_data/`，支持选择多个文件，也支持选择整个文件夹；上传完成后页面会提示导入结果。
-3. 编辑、导入或自动生成 `thesis/style.md` 写作规范。
-4. 点击“开始完整流程”。
-5. 在页面右侧查看论文大纲、任务输出和实时论文预览。
-6. 需要停下时点击“暂停”，当前章节完成后会停在下一章之前。
-7. 生成完成后点击“构建 Word”，得到最终文档。
+### 1. 项目配置
 
-WebUI 保存的私有配置会写入：
+在“项目配置”中填写：
+
+- 论文题目
+- API Base
+- API Key
+- 模型名称
+- 生成粒度：默认“按章高质量生成”
+- 写作单元间隔秒数
+- 请求超时秒数
+- 本轮最多写作单元数，`0` 表示不限制
+
+点击“保存配置”后，私有配置会写入：
 
 ```text
 configs/local.yaml
 ```
 
 这个文件已经被 `.gitignore` 忽略，不会默认上传到 GitHub。
+
+### 2. 资料导入
+
+在“资料导入”中可以一次性导入：
+
+- 零散文件
+- 整个文件夹
+- 多个文件和一个文件夹的组合
+
+没有选择文件时点击上传不会写入任何内容，页面会提示先选择文件。上传完成后会提示导入数量，并展示 `user_data/` 中的文件总数、总体积和前若干个文件预览。
+
+### 3. 写作规范
+
+写作规范对应：
+
+```text
+thesis/style.md
+```
+
+你可以在 WebUI 中直接编辑保存，也可以上传 Markdown/TXT 文件导入。如果没有现成规范，可以把学校格式要求、任务书、论文模板等放入 `user_data/`，再点击“自动规范”，系统会扫描资料生成 `thesis/style.md`。
+
+### 4. 生成流程
+
+常用按钮含义：
+
+- “开始完整流程”：依次初始化、生成大纲、生成计划、生成正文，全部完成后构建 Word。
+- “继续生成”：只继续生成未完成正文。
+- “暂停”：当前写作单元完成后，停在下一个写作单元之前。
+- “继续”：取消暂停标记。
+- “自动规范”：扫描资料并生成 `thesis/style.md`。
+- “资料索引”：重新扫描 `user_data/`，生成 `user_data/resources.md`。
+- “重建大纲”：根据资料和规范重新生成 `thesis/outline.md`。
+- “写作计划”：根据大纲生成 `thesis/section_plan.json`。
+- “构建 Word”：把 Markdown 合并并导出 `output/thesis.docx`。
+- “关闭 WebUI”：关闭本地 Python 服务。
+
+右侧面板可以查看：
+
+- 实时论文预览
+- 论文大纲
+- 写作计划
+- 任务输出日志
+
+### 5. 推荐测试顺序
+
+第一次完整测试建议按这个顺序：
+
+1. 运行 `python workflow.py init`。
+2. 构建前端：`cd workflows/webui/frontend && npm install && npm run build && cd ../../..`。
+3. 运行 `python workflow.py ui`。
+4. 在 WebUI 中保存 API 配置。
+5. 导入资料文件或资料文件夹。
+6. 点击“自动规范”或手动编辑 `style.md`。
+7. 点击“资料索引”。
+8. 点击“重建大纲”。
+9. 点击“写作计划”。
+10. 点击“继续生成”或“开始完整流程”。
+11. 生成完成后点击“构建 Word”。
+
+如果你想测试全自动链路，可以在配置和资料准备好以后直接点击“开始完整流程”。
 
 ## 应该上传哪些资料
 
@@ -231,8 +314,8 @@ aigc-thesis-toolkit/
 │   ├── style.md                     # 写作与格式规范
 │   ├── sections/                    # 生成的章节/小节 Markdown
 │   └── logs/                        # 运行日志
-├── user_data/                       # 输出报告（终端/txt/json/html）
-│   └── hc3/                         # 个人资料目录占位说明
+├── user_data/                       # 个人资料目录（git 忽略）
+│   └── README.md                    # 资料放置说明
 ├── workflows/
 │   ├── write/                       # 资料、规范、大纲、正文生成
 │   ├── export_docx/                 # Markdown 到 Word 的导出流程
