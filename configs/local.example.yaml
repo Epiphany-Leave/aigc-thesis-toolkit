@@ -14,3 +14,6 @@ engines:
       sleep_seconds: 3
       request_timeout_seconds: 300
       max_context_tail_chars: 8000
+
+assembly:
+  min_word_count: 25000

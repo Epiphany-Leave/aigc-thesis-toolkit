@@ -21,6 +21,7 @@ EQUATION_NUMBER = re.compile(
     r"^(.*?)(?:\\qquad\s*)*(?:\\quad\s*)*\(\s*([0-9]+[-－][0-9]+)\s*\)\s*$"
 )
 STANDALONE_EQUATION_NUMBER = re.compile(r"^\s*\(\s*([0-9]+[-－][0-9]+)\s*\)\s*$")
+ORDERED_LIST_ITEM = re.compile(r"^(\s*)\d+[.、]\s+(.+?)\s*$")
 
 
 def deep_merge(base, override):
@@ -89,6 +90,28 @@ def normalize_formula_tags(text):
     text = re.sub(r"\\qquad\s*（([^）]+)）", r"\\qquad (\1)", text)
     text = re.sub(r"\\qquad\s*\(\s*([0-9]+[-－][0-9]+)\s*\)", lambda m: f"\\qquad ({normalize_number(m.group(1))})", text)
     return text
+
+
+def normalize_emphasis(text):
+    text = re.sub(r"\*\*([^*\n]+)\*\*", r"\1", text)
+    text = re.sub(r"__([^_\n]+)__", r"\1", text)
+    text = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"\1", text)
+    return text
+
+
+def normalize_ordered_list(line):
+    match = ORDERED_LIST_ITEM.match(line)
+    if not match:
+        return line
+    indent, body = match.groups()
+    index = getattr(normalize_ordered_list, "index", 0) + 1
+    normalize_ordered_list.index = index
+    return f"{indent}（{index}）{body}"
+
+
+def reset_ordered_list_counter(line):
+    if not ORDERED_LIST_ITEM.match(line) and not line.startswith("   "):
+        normalize_ordered_list.index = 0
 
 
 def equation_table(formula, number):
@@ -179,6 +202,7 @@ def preprocess(text):
 
     while index < len(source_lines):
         line = source_lines[index]
+        reset_ordered_list_counter(line)
 
         if line.strip() == "$$":
             formula_lines = []
@@ -226,6 +250,8 @@ def preprocess(text):
             index += 1
             continue
 
+        line = normalize_ordered_list(line)
+        line = normalize_emphasis(line)
         lines.append(normalize_inline_refs(line, enable_links))
         index += 1
 

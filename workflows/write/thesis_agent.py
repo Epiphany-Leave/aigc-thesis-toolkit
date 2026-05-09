@@ -3,6 +3,7 @@
 
 import datetime
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -41,6 +42,7 @@ OUTPUT_DIR = WORK / PATHS.get("output_dir", "output")
 STATE_FILE = BASE / "state.json"
 PLAN_FILE = WORK / ASSEMBLY.get("plan_file", "thesis/section_plan.json")
 THESIS_FILE = WORK / ASSEMBLY.get("output_markdown", "output/thesis.md")
+MIN_WORD_COUNT = int(ASSEMBLY.get("min_word_count", 25000) or 25000)
 
 THESIS_TITLE = CONFIG.get("project", {}).get("title", "未命名论文")
 DEFAULT_SECTION_ORDER = [
@@ -207,6 +209,40 @@ def assembly_order():
     return configured or DEFAULT_SECTION_ORDER
 
 
+def promote_heading(line):
+    match = re.match(r"^(#{2,6})(\s+.+)$", line)
+    if not match:
+        return line
+    hashes, rest = match.groups()
+    return hashes[1:] + rest
+
+
+def normalize_chapter_markdown(content, item):
+    """Keep assembled Markdown heading levels aligned with Word styles."""
+    if item.get("subsection_title"):
+        return content
+    if item.get("generation_granularity") != "chapter" and item.get("subsections") is None:
+        return content
+
+    lines = content.splitlines()
+    heading_indices = [index for index, line in enumerate(lines) if re.match(r"^#{1,6}\s+", line)]
+    if not heading_indices:
+        chapter_title = item.get("chapter_title") or item.get("title")
+        return f"# {chapter_title}\n\n{content}" if chapter_title else content
+
+    first = heading_indices[0]
+    if lines[first].startswith("# "):
+        return content
+
+    return "\n".join(promote_heading(line) for line in lines)
+
+
+def count_cjk_words(text):
+    cjk = re.findall(r"[\u4e00-\u9fff]", text)
+    latin_words = re.findall(r"[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*", text)
+    return len(cjk) + len(latin_words)
+
+
 def cmd_assemble():
     OUTPUT_DIR.mkdir(exist_ok=True)
     parts = [f"# {THESIS_TITLE}\n"]
@@ -226,10 +262,16 @@ def cmd_assemble():
             current_chapter = chapter_title
         content = path.read_text(encoding="utf-8-sig").strip()
         if content:
+            content = normalize_chapter_markdown(content, item)
             parts.append(content)
 
-    THESIS_FILE.write_text("\n\n".join(parts) + "\n", encoding="utf-8")
+    assembled = "\n\n".join(parts) + "\n"
+    THESIS_FILE.write_text(assembled, encoding="utf-8")
     print(f"Assembled -> {THESIS_FILE}")
+    word_count = count_cjk_words(assembled)
+    print(f"Word count estimate: {word_count}")
+    if MIN_WORD_COUNT and word_count < MIN_WORD_COUNT:
+        print(f"WARN: word count is below configured minimum {MIN_WORD_COUNT}. Consider regenerating short chapters.")
 
 
 def main():

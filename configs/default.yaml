@@ -48,6 +48,7 @@ paths:
 
 assembly:
   output_markdown: output/thesis.md
+  min_word_count: 25000
   # auto 表示从 thesis/section_plan.json 读取章节顺序。
   # section_plan.json 由 thesis/outline.md 自动生成。
   section_order: auto

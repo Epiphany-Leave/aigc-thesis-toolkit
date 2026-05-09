@@ -98,7 +98,7 @@ def build_prompt(config, section, existing_tail):
     unit_name = "完整章节" if is_chapter_unit else "论文小节"
     subsection_lines = "\n".join(f"- {title}" for title in subsections) if subsections else "（无）"
     heading_rule = (
-        "当前写作单元是完整章节：主标题用 ## 章节标题，章内小节用 ###，必须覆盖下方小节清单。"
+        "当前写作单元是完整章节：主标题必须用 # 章节标题，章内小节用 ##，小节下的条目用 ###，必须覆盖下方小节清单。"
         if is_chapter_unit
         else "当前写作单元是小节：主标题用 ## 当前小节标题，不要输出所属章节的 # 标题。"
     )
@@ -153,7 +153,10 @@ def build_prompt(config, section, existing_tail):
    图X-Y 图题
    说明：这里描述图片应包含的内容、来源或绘制要求。
 6. 表题使用“表X-Y 标题”。引用图、表、公式、文献时使用自然中文表述，例如“如式(X-Y)所示”“如图X-Y所示”，不要手写 Markdown 链接。
-7. 不要用代码块包裹整篇输出。
+7. 正文不要使用 Markdown 加粗或斜体，不要输出 **加粗**、__加粗__、*斜体* 这类格式。
+8. 不要大量使用列表。确需分点时使用中文括号编号，例如“（1）……”“（2）……”，不要使用 Markdown 有序列表“1. ”。
+9. 总字数目标不低于 25000 字；按章生成时每章应充分展开，避免短小提纲化。
+10. 不要用代码块包裹整篇输出。
 """,
         },
     ]

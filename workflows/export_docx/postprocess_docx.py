@@ -279,7 +279,8 @@ def apply_front_matter_layout(root):
             changed += 1
 
     chapter_headings = [child for child in list(body) if is_chapter_heading(child)]
-    first_chapter = chapter_headings[0] if chapter_headings else None
+    body_top_candidates = [child for child in list(body) if is_body_top_heading(child)]
+    first_chapter = chapter_headings[0] if chapter_headings else (body_top_candidates[0] if body_top_candidates else None)
     first_chapter_index = body_index(body, first_chapter) if first_chapter is not None else None
     if first_chapter_index is not None and toc_node is not None:
         body.insert(first_chapter_index, section_break_paragraph("lowerRoman", 1))
