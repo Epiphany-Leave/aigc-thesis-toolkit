@@ -19,8 +19,8 @@ CONFIG_FILE = WORK / "configs" / "default.yaml"
 LOCAL_CONFIG_FILE = WORK / "configs" / "local.yaml"
 TEXT_SUFFIXES = {".md", ".txt", ".csv", ".bib", ".tex", ".json", ".yaml", ".yml", ".log"}
 OFFICE_TEXT_SUFFIXES = {".docx", ".xlsx"}
-MAX_EXTRACT_CHARS_PER_FILE = 32000
-MAX_EXTRACT_CHARS_PER_CHUNK = 8000
+MAX_EXTRACT_CHARS_PER_FILE = 80000
+MAX_EXTRACT_CHARS_PER_CHUNK = 16000
 
 
 def load_config():
@@ -253,7 +253,7 @@ def ai_extract_inventory(config, entries, base, key, model, timeout):
                 timeout,
             )
             parts.append(f"\n### 片段 {index}/{len(chunks)}\n{extracted}")
-    return "\n\n".join(parts)[:120000]
+    return "\n\n".join(parts)[:220000]
 
 
 def chat_completion(base, key, model, messages, timeout):

@@ -38,7 +38,8 @@ const initialStatus = {
   preview: "",
   outline: "",
   thesis_logs: [],
-  latest_log: ""
+  latest_log: "",
+  review_progress: { active: false, done: 0, total: 0, percent: 0, label: "" }
 };
 
 function escapeHtml(value) {
@@ -119,12 +120,14 @@ function App() {
   const [busyAction, setBusyAction] = useState("");
   const [activeTab, setActiveTab] = useState("preview");
   const [autoPreview, setAutoPreview] = useState(true);
+  const [dragActive, setDragActive] = useState(false);
   const previewRef = useRef(null);
   const fileInputRef = useRef(null);
   const folderInputRef = useRef(null);
   const styleFileRef = useRef(null);
 
   const progress = status.total ? Math.round((status.done / status.total) * 100) : 0;
+  const reviewProgress = status.review_progress || initialStatus.review_progress;
   const currentName = status.current?.subsection_title || status.current?.title || "无";
   const runnerOutput = status.runner?.output || [];
 
@@ -185,17 +188,12 @@ function App() {
     await refresh({ keepForms: true });
   }
 
-  async function uploadFiles(event) {
-    event.preventDefault();
+  async function uploadFileEntries(entries) {
     const form = new FormData();
-    let count = 0;
-    for (const input of [fileInputRef.current, folderInputRef.current]) {
-      for (const file of input?.files || []) {
-        form.append("files", file, file.webkitRelativePath || file.name);
-        count += 1;
-      }
+    for (const entry of entries) {
+      form.append("files", entry.file, entry.path || entry.file.webkitRelativePath || entry.file.name);
     }
-    if (!count) {
+    if (!entries.length) {
       setNotice("请先选择文件或文件夹。");
       return;
     }
@@ -205,6 +203,64 @@ function App() {
     fileInputRef.current.value = "";
     folderInputRef.current.value = "";
     await refresh({ keepForms: true });
+  }
+
+  async function uploadFiles(event) {
+    event.preventDefault();
+    const entries = [];
+    for (const input of [fileInputRef.current, folderInputRef.current]) {
+      for (const file of input?.files || []) {
+        entries.push({ file, path: file.webkitRelativePath || file.name });
+      }
+    }
+    await uploadFileEntries(entries);
+  }
+
+  function readEntryFile(entry, pathPrefix = "") {
+    return new Promise((resolve) => {
+      if (entry.isFile) {
+        entry.file((file) => resolve([{ file, path: `${pathPrefix}${file.name}` }]), () => resolve([]));
+        return;
+      }
+      if (!entry.isDirectory) {
+        resolve([]);
+        return;
+      }
+      const reader = entry.createReader();
+      const children = [];
+      const readBatch = () => {
+        reader.readEntries(async (batch) => {
+          if (!batch.length) {
+            const nested = await Promise.all(children.map((child) => readEntryFile(child, `${pathPrefix}${entry.name}/`)));
+            resolve(nested.flat());
+            return;
+          }
+          children.push(...batch);
+          readBatch();
+        }, () => resolve([]));
+      };
+      readBatch();
+    });
+  }
+
+  async function collectDroppedFiles(dataTransfer) {
+    const itemEntries = [];
+    for (const item of dataTransfer.items || []) {
+      const entry = item.webkitGetAsEntry?.();
+      if (entry) itemEntries.push(entry);
+    }
+    if (itemEntries.length) {
+      const nested = await Promise.all(itemEntries.map((entry) => readEntryFile(entry)));
+      return nested.flat();
+    }
+    return Array.from(dataTransfer.files || []).map((file) => ({ file, path: file.webkitRelativePath || file.name }));
+  }
+
+  async function handleDrop(event) {
+    event.preventDefault();
+    setDragActive(false);
+    const entries = await collectDroppedFiles(event.dataTransfer);
+    await uploadFileEntries(entries);
   }
 
   async function uploadStyle(event) {
@@ -242,6 +298,17 @@ function App() {
           <div className="progress-bar"><span style={{ width: `${progress}%` }} /></div>
           <div className="progress-meta">{status.done}/{status.total} 写作单元</div>
         </div>
+        {reviewProgress.active && (
+          <div className="progress-card review-progress">
+            <div className="progress-top">
+              <span>Review 修订进度</span>
+              <strong>{reviewProgress.percent || 0}%</strong>
+            </div>
+            <div className="progress-bar"><span style={{ width: `${reviewProgress.percent || 0}%` }} /></div>
+            <div className="progress-meta">{reviewProgress.done || 0}/{reviewProgress.total || 0} 检测分块</div>
+            {reviewProgress.label && <div className="progress-meta">{reviewProgress.label}</div>}
+          </div>
+        )}
 
         <nav className="nav">
           <button className={activeTab === "preview" ? "active" : ""} onClick={() => setActiveTab("preview")}><BookOpen size={18} />论文预览</button>
@@ -299,10 +366,16 @@ function App() {
 
             <Panel title="资料导入" icon={<FolderUp size={18} />}>
               <form className="upload-layout" onSubmit={uploadFiles}>
-                <div className="drop-zone">
+                <div
+                  className={`drop-zone ${dragActive ? "drag-active" : ""}`}
+                  onDragEnter={(event) => { event.preventDefault(); setDragActive(true); }}
+                  onDragOver={(event) => { event.preventDefault(); setDragActive(true); }}
+                  onDragLeave={(event) => { event.preventDefault(); setDragActive(false); }}
+                  onDrop={handleDrop}
+                >
                   <UploadCloud size={34} />
-                  <strong>导入论文资料</strong>
-                  <span>优先上传可读取的 Markdown/TXT/CSV/DOCX/XLSX。PDF、图片和仿真源文件建议另存关键说明文本。</span>
+                  <strong>拖拽文件或文件夹到这里</strong>
+                  <span>也可以用下方按钮选择。优先上传 Markdown/TXT/CSV/DOCX/XLSX，PDF、图片和仿真源文件建议另存关键说明文本。</span>
                 </div>
                 <div className="upload-inputs">
                   <label>选择文件<input ref={fileInputRef} type="file" multiple /></label>

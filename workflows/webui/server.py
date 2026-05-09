@@ -8,6 +8,7 @@ import errno
 import json
 import mimetypes
 import posixpath
+import re
 import subprocess
 import sys
 import threading
@@ -113,6 +114,7 @@ def status_payload():
     rows = load_plan()
     done = sum(1 for item in rows if item.get("status") == "done")
     current = next((item for item in rows if item.get("status") != "done"), None)
+    runner = RUNNER.snapshot()
     return {
         "project": read_project_title(),
         "done": done,
@@ -124,7 +126,8 @@ def status_payload():
         "output_md": OUTPUT_MD.exists(),
         "review_report": REVIEW_REPORT.exists(),
         "downloads": list_downloads(),
-        "runner": RUNNER.snapshot(),
+        "runner": runner,
+        "review_progress": parse_review_progress(runner.get("output", [])),
         "config": load_settings(),
         "style": STYLE_FILE.read_text(encoding="utf-8") if STYLE_FILE.exists() else "",
         "user_files": list_user_files(),
@@ -133,6 +136,27 @@ def status_payload():
         "thesis_logs": thesis_logs(),
         "latest_log": latest_log_text(),
     }
+
+
+def parse_review_progress(output):
+    progress = {"active": False, "done": 0, "total": 0, "percent": 0, "label": ""}
+    for line in output:
+        total_match = re.search(r"REVIEW TOTAL:\s*(\d+)", line)
+        if total_match:
+            progress["active"] = True
+            progress["total"] = int(total_match.group(1))
+        progress_match = re.search(r"REVIEW PROGRESS:\s*(\d+)/(\d+)", line)
+        if progress_match:
+            progress["active"] = True
+            progress["done"] = int(progress_match.group(1))
+            progress["total"] = int(progress_match.group(2))
+        chunk_match = re.search(r"(REVIEW|REVISE) CHUNK:\s*(.+)", line)
+        if chunk_match:
+            progress["active"] = True
+            progress["label"] = line
+    if progress["total"]:
+        progress["percent"] = min(100, round(progress["done"] / progress["total"] * 100))
+    return progress
 
 
 def read_project_title():

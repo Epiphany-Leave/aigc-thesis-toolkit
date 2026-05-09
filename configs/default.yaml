@@ -24,8 +24,8 @@ engines:
       # 0 表示 generate --all 会连续串行生成所有未完成写作单元；可用 workflow.py pause 暂停在下一个写作单元前。
       max_sections_per_run: 0
       sleep_seconds: 3
-      request_timeout_seconds: 300
-      max_context_tail_chars: 8000
+      request_timeout_seconds: 600
+      max_context_tail_chars: 20000
   quality_gate:
     rule_based: true
     run_after_assemble: true
@@ -66,9 +66,10 @@ review:
   input_markdown: output/thesis.md
   prompt: workflows/review/review_prompt.md
   output_report: output/review_results.md
-  max_chars_per_request: 12000
+  max_chars_per_request: 30000
   sleep_seconds: 2
-  request_timeout_seconds: 240
+  request_timeout_seconds: 600
+  apply_revision: true
   mode: "multi_dimension"
   aggregation: "weighted_score"
   threshold:

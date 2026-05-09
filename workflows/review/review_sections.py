@@ -84,6 +84,10 @@ def read_json(path, default):
     return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
+def read_text(path):
+    return path.read_text(encoding="utf-8-sig", errors="ignore") if path.exists() else ""
+
+
 def load_sections(config):
     thesis_dir = WORK / config.get("paths", {}).get("thesis_dir", "thesis")
     plan_path = WORK / config.get("assembly", {}).get("plan_file", "thesis/section_plan.json")
@@ -171,11 +175,75 @@ def write_report(path, sections):
     path.write_text("\n\n".join(sections).strip() + "\n", encoding="utf-8")
 
 
+def strip_markdown_fence(text):
+    text = text.strip()
+    fence = re.match(r"^```(?:markdown|md)?\s*(.*?)\s*```$", text, flags=re.S | re.I)
+    return fence.group(1).strip() if fence else text
+
+
+def build_revision_prompt(config, item, original, review_result, chunk_index, chunk_total):
+    thesis_dir = WORK / config.get("paths", {}).get("thesis_dir", "thesis")
+    user_data_dir = WORK / config.get("paths", {}).get("user_data_dir", "user_data")
+    style = read_text(thesis_dir / "style.md")
+    outline = read_text(thesis_dir / "outline.md")
+    resources = read_text(user_data_dir / "resources.md")
+    title = item.get("chapter_title") or item.get("title") or item.get("id")
+    subsection = item.get("subsection_title")
+    return [
+        {
+            "role": "system",
+            "content": (
+                "你是毕业论文自动修订助手。你必须直接输出修订后的 Markdown 正文，不输出解释、建议或审稿报告。"
+                "优先保证论文质量、论证完整、格式稳定、与资料一致。不要为了省 token 压缩必要内容。"
+                "不得编造资料中没有的数据、实验结果或文献。资料不足时使用保守表述或 TODO。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"""请根据 review 结果直接修订下面的论文片段。
+
+论文题目：{config.get('project', {}).get('title', '')}
+章节：{title}
+小节：{subsection or "（整章）"}
+分块：{chunk_index}/{chunk_total}
+
+写作规范：
+{style}
+
+论文大纲：
+{outline}
+
+个人资料索引：
+{resources}
+
+Review 结果：
+{review_result}
+
+原论文片段：
+{original}
+
+修订要求：
+1. 只输出修订后的 Markdown 正文，不要输出“修改说明”“以下是”等解释。
+2. 保留原片段应有的标题层级，不要新增其他章节内容。
+3. 充分修复 review 指出的问题，并主动优化单调、空泛、AI 痕迹明显的表达。
+4. 保留并规范图、表、公式占位；公式编号必须单独占一行，不要写进 $$...$$。
+5. 表格必须为标准 Markdown 管道表格，表题单独一行，表题和表格之间空一行。
+6. 正文不要使用 Markdown 加粗或斜体。
+7. 不要使用“1. ”这类 Markdown 有序列表，确需分点时使用“（1）”“（2）”，编号前不要有空格。
+8. 禁止输出代码块、程序源码或 ``` 围栏。
+""",
+        },
+    ]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--only", help="只审阅指定 section id 或文件路径")
     parser.add_argument("--max-chars", type=int, default=None, help="单个 review 请求的最大字符数")
     parser.add_argument("--sleep", type=float, default=None, help="每个 review 请求后的等待秒数")
+    parser.add_argument("--apply", dest="apply_revision", action="store_true", help="直接改写 thesis 中的章节文件")
+    parser.add_argument("--no-apply", dest="apply_revision", action="store_false", help="只生成 review 报告，不改写章节")
+    parser.set_defaults(apply_revision=None)
     args = parser.parse_args()
 
     config = load_config()
@@ -184,6 +252,11 @@ def main():
     max_chars = args.max_chars or int(review_config.get("max_chars_per_request", 12000) or 12000)
     sleep_seconds = args.sleep if args.sleep is not None else float(review_config.get("sleep_seconds", 2) or 0)
     timeout = int(review_config.get("request_timeout_seconds", 240) or 240)
+    apply_revision = (
+        bool(review_config.get("apply_revision", True))
+        if args.apply_revision is None
+        else args.apply_revision
+    )
     report_path = WORK / review_config.get("output_report", "output/review_results.md")
     log_dir = WORK / config.get("paths", {}).get("thesis_dir", "thesis") / "logs"
     log_path = log_dir / f"review_{dt.datetime.now():%Y%m%d_%H%M%S}.md"
@@ -198,28 +271,54 @@ def main():
     if not rows:
         raise SystemExit("ERROR: no generated section files found. Run generation first.")
 
+    chunk_rows = []
+    for item, path, content in rows:
+        chunks = split_text(content, max_chars)
+        for index, chunk in enumerate(chunks, start=1):
+            chunk_rows.append((item, path, content, chunks, index, chunk))
+
+    print(f"REVIEW TOTAL: {len(chunk_rows)}")
     report_parts = [
         "# 论文 Review 结果",
         f"- 时间：{dt.datetime.now():%Y-%m-%d %H:%M:%S}",
         f"- 模型：{model}",
         f"- 策略：按章节串行审阅，超过 {max_chars} 字符自动切块，避免一次性审阅整篇导致 API 卡死。",
+        f"- 修订模式：{'直接改写 thesis/sections 并重建 Word' if apply_revision else '只生成建议报告'}",
         "- 产物：本脚本生成 review 报告与日志；workflow.py review 会在审阅完成后重新构建 output/thesis.docx。",
     ]
 
+    processed = 0
     for item, path, content in rows:
         chunks = split_text(content, max_chars)
         title = item.get("chapter_title") or item.get("title") or item.get("id")
         print(f"REVIEW: {item.get('id')} ({len(chunks)} chunk)")
         report_parts.append(f"\n# {title}")
         report_parts.append(f"- 文件：{path.relative_to(WORK).as_posix()}")
+        revised_chunks = []
         for index, chunk in enumerate(chunks, start=1):
+            processed += 1
+            print(f"REVIEW PROGRESS: {processed}/{len(chunk_rows)}")
             print(f"REVIEW CHUNK: {item.get('id')} {index}/{len(chunks)}")
             messages = build_prompt(item, chunk, index, len(chunks), dimensions)
             result = chat_completion(base, key, model, messages, timeout=timeout)
             report_parts.append(f"\n## 分块 {index}/{len(chunks)}")
             report_parts.append(result)
+            if apply_revision:
+                print(f"REVISE CHUNK: {item.get('id')} {index}/{len(chunks)}")
+                revised = chat_completion(
+                    base,
+                    key,
+                    model,
+                    build_revision_prompt(config, item, chunk, result, index, len(chunks)),
+                    temperature=0.2,
+                    timeout=timeout,
+                )
+                revised_chunks.append(strip_markdown_fence(revised))
             if sleep_seconds:
                 time.sleep(sleep_seconds)
+        if apply_revision and revised_chunks:
+            path.write_text("\n\n".join(revised_chunks).strip() + "\n", encoding="utf-8")
+            print(f"OK: revised {path}")
 
     write_report(report_path, report_parts)
     write_report(log_path, report_parts)
