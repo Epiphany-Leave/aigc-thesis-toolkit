@@ -4,7 +4,7 @@ AIGC Thesis Toolkit 是一个本地运行的 AI 论文写作工作流。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-![AIGC Thesis Toolkit WebUI](image.png)
+![alt text](image.png)
 
 它可以把你放入 `user_data/` 的参考资料、学校格式要求、开题/中期报告、参考论文、仿真或实验数据等内容，整理成可追踪的资料索引，并辅助生成论文大纲、章节正文、完整 Markdown 和 Word 文档。
 这个项目的目标不是“一键交作业”，而是提供一个更稳定、更可控、更容易续写的 AIGC 论文工作台：你提供真实资料和格式要求，系统默认按章串行生成内容，并保留中间文件、状态和预览，方便你检查、修改和导出。
