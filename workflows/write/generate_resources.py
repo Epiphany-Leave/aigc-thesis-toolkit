@@ -21,12 +21,26 @@ WORK = Path(__file__).resolve().parents[2]
 CONFIG_FILE = WORK / "configs" / "default.yaml"
 LOCAL_CONFIG_FILE = WORK / "configs" / "local.yaml"
 TEXT_SUFFIXES = {".md", ".txt", ".csv", ".bib", ".tex", ".json", ".yaml", ".yml", ".log"}
+SOURCE_CODE_SUFFIXES = {
+    ".c",
+    ".h",
+    ".cpp",
+    ".hpp",
+    ".s",
+    ".asm",
+    ".uvprojx",
+    ".uvoptx",
+    ".uvguix",
+    ".dbgconf",
+    ".orig",
+}
 OFFICE_TEXT_SUFFIXES = {".doc", ".docx", ".xlsx"}
 PDF_SUFFIXES = {".pdf"}
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
 BINARY_STRING_SUFFIXES = {".epro", ".schdoc", ".pcbdoc", ".prjpcb", ".json", ".xml"}
 MAX_EXTRACT_CHARS_PER_FILE = 80000
 MAX_EXTRACT_CHARS_PER_CHUNK = 16000
+MAX_SOURCE_SUMMARY_CHARS = 6000
 EXTRACTION_REPORT = WORK / "user_data" / "extraction_report.md"
 EXTRACTION_EVENTS = {}
 
@@ -431,7 +445,7 @@ def repaired_multipart_relative(relative):
     return (candidate or relative), bool(candidate)
 
 
-def make_entry(path, relative, kind, size, content, readable, repaired=False):
+def make_entry(path, relative, kind, size, content, readable, repaired=False, skip_ai=False):
     notes = list(extraction_notes(path))
     if repaired:
         notes.insert(0, "检测到旧版 WebUI 导入产生的异常 multipart 路径；已按文件名尝试补救读取，建议用新版 WebUI 重新导入。")
@@ -443,7 +457,42 @@ def make_entry(path, relative, kind, size, content, readable, repaired=False):
         "readable": readable,
         "notes": notes,
         "repaired": repaired,
+        "skip_ai": skip_ai,
     }
+
+
+def summarize_source_file(path, relative):
+    text = read_text_content(path, limit=40000)
+    if not text.strip():
+        return f"- 源码文件：`{relative}`\n- 状态：文件为空或无法按文本读取。"
+    includes = sorted(set(re.findall(r"^\s*#\s*include\s+[<\"]([^>\"]+)[>\"]", text, flags=re.M)))[:20]
+    defines = sorted(set(re.findall(r"^\s*#\s*define\s+([A-Za-z_][A-Za-z0-9_]*)", text, flags=re.M)))[:30]
+    functions = sorted(
+        set(
+            re.findall(
+                r"^\s*(?:static\s+)?(?:void|int|uint\d+_t|float|double|char|bool|HAL_StatusTypeDef)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+                text,
+                flags=re.M,
+            )
+        )
+    )[:40]
+    comments = []
+    for match in re.findall(r"/\*+([\s\S]{0,500}?)\*/|//\s*(.{4,120})", text):
+        comment = clean_extracted_text(" ".join(part for part in match if part), limit=180)
+        if comment and not re.search(r"copyright|license|created on|author", comment, flags=re.I):
+            comments.append(comment)
+        if len(comments) >= 12:
+            break
+    parts = [f"- 源码文件：`{relative}`", f"- 文件大小：{path.stat().st_size} bytes"]
+    if includes:
+        parts.append("- 头文件/依赖：" + "、".join(includes))
+    if defines:
+        parts.append("- 宏/常量：" + "、".join(defines))
+    if functions:
+        parts.append("- 函数/接口：" + "、".join(functions))
+    if comments:
+        parts.append("- 注释线索：" + "；".join(comments))
+    return "\n".join(parts)[:MAX_SOURCE_SUMMARY_CHARS]
 
 
 def scan_user_data_entries(user_data_dir):
@@ -502,7 +551,10 @@ def scan_user_data_entries_v2(user_data_dir):
         relative, repaired = repaired_multipart_relative(raw_relative)
         suffix = Path(relative).suffix.lower() or path.suffix.lower()
         size = path.stat().st_size if path.exists() else 0
-        if suffix in TEXT_SUFFIXES:
+        if suffix in SOURCE_CODE_SUFFIXES:
+            sample = summarize_source_file(path, relative)
+            entries.append(make_entry(path, relative, "源码/工程配置摘要", size, sample, True, repaired, skip_ai=True))
+        elif suffix in TEXT_SUFFIXES:
             content = read_text_content(path)
             entries.append(make_entry(path, relative, "文本", size, content, True, repaired))
         elif suffix in OFFICE_TEXT_SUFFIXES:
@@ -659,17 +711,26 @@ def ai_extract_inventory_v2(config, entries, base, key, model, timeout):
                 f"## {entry['path']}\n- 类型：{entry['type']}\n- 状态：未能抽取正文，只能作为文件名和路径线索。\n{notes}"
             )
             continue
+        if entry.get("skip_ai"):
+            parts.append(
+                f"## {entry['path']}\n- 类型：{entry['type']}\n- 状态：本地摘要，未逐行发送给 AI，避免源码文件导致超时或正文出现代码。\n{notes}\n\n{entry['content']}"
+            )
+            continue
         chunks = split_text(entry["content"])
         parts.append(f"## {entry['path']}\n- 类型：{entry['type']}\n- 大小：{entry['size']} bytes\n{notes}")
         for index, chunk in enumerate(chunks, start=1):
             print(f"EXTRACT: {entry['path']} {index}/{len(chunks)}")
-            extracted = chat_completion(
-                base,
-                key,
-                model,
-                build_extract_messages(project_title, entry, chunk, index, len(chunks)),
-                timeout,
-            )
+            try:
+                extracted = chat_completion(
+                    base,
+                    key,
+                    model,
+                    build_extract_messages(project_title, entry, chunk, index, len(chunks)),
+                    timeout,
+                )
+            except RuntimeError as exc:
+                extracted = f"- 抽取失败：{exc}\n- 处理方式：跳过该片段，继续扫描后续资料。"
+                print(f"WARN: skipped {entry['path']} {index}/{len(chunks)}: {exc}")
             parts.append(f"\n### 片段 {index}/{len(chunks)}\n{extracted}")
     return "\n\n".join(parts)[:220000]
 
@@ -713,6 +774,12 @@ def chat_completion(base, key, model, messages, timeout):
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         raise SystemExit(f"ERROR: API request failed: {exc.code}\n{detail}") from exc
+    except TimeoutError as exc:
+        raise RuntimeError(f"API read timeout after {timeout}s") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"API connection failed: {exc.reason}") from exc
+    except OSError as exc:
+        raise RuntimeError(f"API request failed: {exc}") from exc
     return data["choices"][0]["message"]["content"].strip()
 
 
