@@ -54,7 +54,7 @@ python workflow.py init
 
 ```bash
 sudo apt update
-sudo apt install -y poppler-utils antiword catdoc tesseract-ocr tesseract-ocr-chi-sim
+sudo apt install -y libreoffice poppler-utils antiword catdoc tesseract-ocr tesseract-ocr-chi-sim
 ```
 
 其中 `poppler-utils` 提供 `pdftotext`，用于抽取可复制文本的 PDF；`antiword/catdoc` 用于读取老版 `.doc`；`tesseract` 用于图片 OCR。也可以安装 `libreoffice`，系统会优先尝试把老版 `.doc` 转成文本。没有安装这些工具时，系统仍会尽量读取 DOCX/XLSX/TXT/CSV，并对 `.doc` 或部分工程文件做二进制字符串恢复，但效果会弱一些。
@@ -222,7 +222,7 @@ thesis/style.md
 为了减少“瞎写”，建议把资料分成两类：
 
 - **模型可直接读取的核心资料**：Markdown、TXT、CSV、BibTeX、LaTeX、JSON、YAML、DOCX、XLSX。系统会尽量抽取这些文件中的文本或表格片段，并逐文件/分块调用 AI 提取事实，写入 `user_data/resources.md`。
-- **可通过工具增强读取的资料**：老版 `.doc`、可复制文本的 PDF、包含清晰文字的图片。推荐安装 `antiword/catdoc`、`poppler-utils` 和 `tesseract-ocr` 后再运行“资料索引”。
+- **可通过工具增强读取的资料**：老版 `.doc`、可复制文本的 PDF、包含清晰文字的图片。推荐安装 `libreoffice`、`antiword/catdoc`、`poppler-utils` 和 `tesseract-ocr` 后再运行“资料索引”。
 - **模型只能作为文件名线索的资料**：PDF 扫描件、纯图片原理图、仿真工程文件、压缩包、二进制文件。系统会尝试 OCR 或字符串恢复，但不能保证完整理解其中内容。
 
 如果关键资料在 PDF、图片或仿真软件里，建议额外整理一个文本说明文件，例如：

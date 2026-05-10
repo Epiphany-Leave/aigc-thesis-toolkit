@@ -95,6 +95,51 @@ def run_text_command(command, timeout=60):
     return result.stdout if result.returncode == 0 else ""
 
 
+def wsl_to_windows_path(path):
+    if not command_exists("wslpath"):
+        return ""
+    return run_text_command(["wslpath", "-w", str(path)]).strip()
+
+
+def convert_doc_with_windows_word(path, limit=MAX_SAMPLE_CHARS):
+    powershell = shutil.which("powershell.exe")
+    if not powershell:
+        return ""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_path = Path(tmpdir) / f"{path.stem}.txt"
+        input_win = wsl_to_windows_path(path)
+        output_win = wsl_to_windows_path(output_path)
+        if not input_win or not output_win:
+            return ""
+        input_win_safe = input_win.replace("'", "''")
+        output_win_safe = output_win.replace("'", "''")
+        script = (
+            "$ErrorActionPreference='Stop';"
+            "$word=New-Object -ComObject Word.Application;"
+            "$word.Visible=$false;"
+            f"$doc=$word.Documents.Open('{input_win_safe}');"
+            f"$doc.SaveAs([ref]'{output_win_safe}', [ref]7);"
+            "$doc.Close($false);"
+            "$word.Quit();"
+        )
+        try:
+            result = subprocess.run(
+                [powershell, "-NoProfile", "-Command", script],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=180,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return ""
+        if result.returncode != 0 or not output_path.exists():
+            return ""
+        return clean_extracted_text(output_path.read_text(encoding="utf-8", errors="ignore"), limit)
+
+
 def convert_with_libreoffice(path, target_ext, limit=MAX_SAMPLE_CHARS):
     executable = shutil.which("libreoffice") or shutil.which("soffice")
     if not executable:
@@ -186,6 +231,9 @@ def read_office_sample(path):
             text = xml_text(path, ["word/document.xml"], limit=MAX_SAMPLE_CHARS)
             if text.strip():
                 return text
+        word_text = convert_doc_with_windows_word(path)
+        if word_text.strip():
+            return word_text
         converted = convert_with_libreoffice(path, "txt:Text")
         if converted.strip():
             return converted
