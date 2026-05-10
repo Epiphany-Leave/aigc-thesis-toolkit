@@ -14,6 +14,7 @@ import {
   Save,
   ScrollText,
   Settings,
+  Settings2,
   Sparkles,
   Square,
   UploadCloud
@@ -121,6 +122,7 @@ function App() {
   const [activeTab, setActiveTab] = useState("preview");
   const [autoPreview, setAutoPreview] = useState(true);
   const [dragActive, setDragActive] = useState(false);
+  const [configOpen, setConfigOpen] = useState(false);
   const previewRef = useRef(null);
   const fileInputRef = useRef(null);
   const folderInputRef = useRef(null);
@@ -201,9 +203,8 @@ function App() {
     setSettings((current) => ({ ...current, [name]: value }));
   }
 
-  async function saveSettings(event) {
-    event.preventDefault();
-    const result = await postJson("/api/settings", settings);
+  async function saveSettingsPayload(payload = settings) {
+    const result = await postJson("/api/settings", payload);
     setNotice(result.message || "配置已保存。");
     await refresh({ keepForms: false });
   }
@@ -362,6 +363,21 @@ function App() {
       </aside>
 
       <main className="main">
+        <header className="topbar">
+          <div>
+            <strong>{status.project || "AIGC Thesis Toolkit"}</strong>
+            <span>资料、写作、Review 与导出工作台</span>
+          </div>
+          <div className="topbar-actions">
+            <button className="ghost-btn" type="button" onClick={() => setConfigOpen(true)}>
+              <Settings2 size={16} />配置中心
+            </button>
+            <span className={status.runner?.running ? "status-pill busy" : "status-pill"}>
+              {status.runner?.running ? "运行中" : "空闲"}
+            </span>
+          </div>
+        </header>
+
         {notice && <div className="notice"><CheckCircle2 size={18} />{notice}</div>}
 
         <section className="command-strip">
@@ -381,25 +397,6 @@ function App() {
 
         <section className="dashboard">
           <div className="left-column">
-            <Panel title="项目配置" icon={<Settings size={18} />}>
-              <form className="form-grid" onSubmit={saveSettings}>
-                <label>论文题目<input value={settings.title || ""} onChange={(e) => updateSetting("title", e.target.value)} /></label>
-                <label>API Base<input value={settings.api_base || ""} onChange={(e) => updateSetting("api_base", e.target.value)} /></label>
-                <label>模型<input value={settings.model || ""} onChange={(e) => updateSetting("model", e.target.value)} /></label>
-                <label>API Key<input type="password" value={settings.api_key || ""} onChange={(e) => updateSetting("api_key", e.target.value)} /></label>
-                <label>生成粒度
-                  <select value={settings.granularity || "chapter"} onChange={(e) => updateSetting("granularity", e.target.value)}>
-                    <option value="chapter">按章高质量生成</option>
-                    <option value="subsection">按小节省 token 生成</option>
-                  </select>
-                </label>
-                <label>间隔秒数<input value={settings.sleep_seconds ?? 3} onChange={(e) => updateSetting("sleep_seconds", e.target.value)} /></label>
-                <label>请求超时<input value={settings.request_timeout_seconds ?? 300} onChange={(e) => updateSetting("request_timeout_seconds", e.target.value)} /></label>
-                <label>本轮最多<input value={settings.max_sections_per_run ?? 0} onChange={(e) => updateSetting("max_sections_per_run", e.target.value)} /></label>
-                <div className="form-actions"><button className="primary"><Save size={16} />保存配置</button></div>
-              </form>
-            </Panel>
-
             <Panel title="资料导入" icon={<FolderUp size={18} />}>
               <form
                 className="upload-layout"
@@ -517,6 +514,14 @@ function App() {
             )}
           </div>
         </section>
+        {configOpen && (
+          <ConfigDrawer
+            settings={settings}
+            setSettings={setSettings}
+            onClose={() => setConfigOpen(false)}
+            onSave={(payload) => saveSettingsPayload(payload)}
+          />
+        )}
       </main>
     </div>
   );
@@ -531,6 +536,66 @@ function Panel({ title, icon, aside, children }) {
       </div>
       {children}
     </section>
+  );
+}
+
+function ConfigDrawer({ settings, setSettings, onClose, onSave }) {
+  const [draft, setDraft] = useState(() => ({ ...settings }));
+
+  function setField(name, value) {
+    setDraft((current) => ({ ...current, [name]: value }));
+  }
+
+  async function submit() {
+    setSettings(draft);
+    await onSave(draft);
+    onClose();
+  }
+
+  return (
+    <div className="drawer-backdrop" onMouseDown={onClose}>
+      <aside className="config-drawer" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="drawer-head">
+          <div>
+            <h2>配置中心</h2>
+            <p>API、模型和质量优先运行参数集中在这里。</p>
+          </div>
+          <button className="icon-btn" type="button" onClick={onClose}>×</button>
+        </div>
+
+        <div className="drawer-section">
+          <h3>论文项目</h3>
+          <label>论文题目<input value={draft.title || ""} onChange={(event) => setField("title", event.target.value)} /></label>
+        </div>
+
+        <div className="drawer-section">
+          <h3>生成 API</h3>
+          <label>API Base<input value={draft.api_base || ""} onChange={(event) => setField("api_base", event.target.value)} /></label>
+          <label>API Key<input type="password" value={draft.api_key || ""} onChange={(event) => setField("api_key", event.target.value)} /></label>
+          <label>模型<input value={draft.model || ""} onChange={(event) => setField("model", event.target.value)} /></label>
+        </div>
+
+        <div className="drawer-section">
+          <h3>质量优先参数</h3>
+          <label>生成粒度
+            <select value={draft.granularity || "chapter"} onChange={(event) => setField("granularity", event.target.value)}>
+              <option value="chapter">按章高质量生成</option>
+              <option value="subsection">按小节稳定生成</option>
+            </select>
+          </label>
+          <div className="drawer-grid">
+            <label>请求超时<input value={draft.request_timeout_seconds ?? 600} onChange={(event) => setField("request_timeout_seconds", event.target.value)} /></label>
+            <label>间隔秒数<input value={draft.sleep_seconds ?? 3} onChange={(event) => setField("sleep_seconds", event.target.value)} /></label>
+            <label>本轮最多<input value={draft.max_sections_per_run ?? 0} onChange={(event) => setField("max_sections_per_run", event.target.value)} /></label>
+          </div>
+          <p className="drawer-note">0 表示完整流程会串行完成所有未生成单元；暂停按钮会在当前单元结束后生效。</p>
+        </div>
+
+        <button className="primary drawer-save" type="button" onClick={submit}>
+          <Save size={16} />保存配置
+        </button>
+      </aside>
+    </div>
   );
 }
 
