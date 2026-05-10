@@ -258,9 +258,6 @@ def read_doc_sample(path, limit=MAX_EXTRACT_CHARS_PER_FILE):
         text = read_docx_sample(path, limit=limit)
         if text.strip():
             return text
-    word_text = convert_doc_with_windows_word(path, limit=limit)
-    if word_text.strip():
-        return word_text
     converted = convert_with_libreoffice(path, "txt:Text", limit=limit)
     if converted.strip():
         return converted
@@ -272,6 +269,9 @@ def read_doc_sample(path, limit=MAX_EXTRACT_CHARS_PER_FILE):
         text = run_text_command(["catdoc", "-w", str(path)])
         if text.strip():
             return clean_extracted_text(text, limit)
+    word_text = convert_doc_with_windows_word(path, limit=limit)
+    if word_text.strip():
+        return word_text
     return extract_binary_strings(path, limit=limit)
 
 

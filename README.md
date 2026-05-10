@@ -57,7 +57,7 @@ sudo apt update
 sudo apt install -y libreoffice poppler-utils antiword catdoc tesseract-ocr tesseract-ocr-chi-sim
 ```
 
-其中 `poppler-utils` 提供 `pdftotext`，用于抽取可复制文本的 PDF；`antiword/catdoc` 用于读取老版 `.doc`；`tesseract` 用于图片 OCR。也可以安装 `libreoffice`，系统会优先尝试把老版 `.doc` 转成文本。没有安装这些工具时，系统仍会尽量读取 DOCX/XLSX/TXT/CSV，并对 `.doc` 或部分工程文件做二进制字符串恢复，但效果会弱一些。
+其中 `libreoffice`、`antiword/catdoc` 用于读取老版 `.doc`，`poppler-utils` 提供 `pdftotext` 抽取可复制文本的 PDF，`tesseract` 用于图片 OCR。没有安装这些工具时，系统仍会尽量读取 DOCX/XLSX/TXT/CSV，并对 `.doc` 或部分工程文件做二进制字符串恢复，但效果会弱一些。
 
 安装并构建 React WebUI：
 

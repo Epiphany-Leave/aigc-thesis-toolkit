@@ -231,9 +231,6 @@ def read_office_sample(path):
             text = xml_text(path, ["word/document.xml"], limit=MAX_SAMPLE_CHARS)
             if text.strip():
                 return text
-        word_text = convert_doc_with_windows_word(path)
-        if word_text.strip():
-            return word_text
         converted = convert_with_libreoffice(path, "txt:Text")
         if converted.strip():
             return converted
@@ -245,6 +242,9 @@ def read_office_sample(path):
             text = run_text_command(["catdoc", "-w", str(path)])
             if text.strip():
                 return clean_extracted_text(text)
+        word_text = convert_doc_with_windows_word(path)
+        if word_text.strip():
+            return word_text
         return extract_binary_strings(path)
     if suffix == ".docx":
         return xml_text(path, ["word/document.xml"])
