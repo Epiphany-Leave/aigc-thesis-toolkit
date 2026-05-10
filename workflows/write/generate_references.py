@@ -162,11 +162,18 @@ def author_text(authors):
         if isinstance(author, dict):
             family = clean_text(author.get("family"))
             given = clean_text(author.get("given"))
-            names.append(clean_text(f"{family} {given}"))
+            if re.search(r"[\u4e00-\u9fff]", family + given):
+                names.append(clean_text(f"{family}{given}"))
+            else:
+                names.append(clean_text(f"{family} {given}"))
         else:
-            names.append(clean_text(author))
+            text = clean_text(author)
+            comma_name = re.match(r"^([^,，]+)[,，]\s*(.+)$", text)
+            if comma_name and re.search(r"[\u4e00-\u9fff]", text):
+                text = clean_text(comma_name.group(1) + comma_name.group(2))
+            names.append(text)
     if not names:
-        return "作者不详"
+        return ""
     return ", ".join(names[:3]) + (" 等" if len(names) > 3 else "")
 
 
@@ -180,6 +187,10 @@ def format_reference_from_fields(fields):
     number = clean_text(fields.get("number"))
     pages = clean_text(fields.get("pages"))
     doi = clean_text(fields.get("doi"))
+    if not title:
+        return ""
+    if not authors and not note.startswith("来源："):
+        return ""
     tail = []
     if journal:
         tail.append(journal)
@@ -189,13 +200,11 @@ def format_reference_from_fields(fields):
         tail.append(volume + (f"({number})" if number else ""))
     if pages:
         tail.append(pages)
-    result = f"{authors}. {title}."
+    result = f"{authors}. {title}." if authors else f"{title}."
     if tail:
         result += " " + ", ".join(tail) + "."
     if doi:
         result += f" DOI: {doi}."
-    if note.startswith("来源："):
-        result += f" {note}."
     return result
 
 
@@ -224,6 +233,8 @@ def bib_from_crossref_item(item, index):
     doi = clean_text(item.get("DOI"))
     key_seed = re.sub(r"[^A-Za-z0-9]+", "", (doi or title or f"ref{index}"))[:24] or f"ref{index}"
     authors = item.get("author") or []
+    if not title or not authors:
+        return ""
     author_field = " and ".join(clean_text(f"{a.get('family', '')}, {a.get('given', '')}") for a in authors if a.get("family"))
     entry_type = "article" if item.get("type") == "journal-article" else "misc"
     fields = [
@@ -277,9 +288,16 @@ def dedupe_items(items):
 
 def build_references_markdown(entries):
     lines = ["# 参考文献", ""]
+    rendered = []
     for index, entry in enumerate(entries, start=1):
-        lines.append(f"[{index}] {format_reference_from_fields(entry['fields'])}")
-    if len(lines) == 2:
+        ref = format_reference_from_fields(entry["fields"])
+        if not ref or "作者不详" in ref or "TODO" in ref:
+            continue
+        rendered.append(ref)
+    for index, ref in enumerate(rendered, start=1):
+        lines.append(f"[{index}] {ref}")
+        lines.append("")
+    if not rendered:
         lines.append("[1] TODO：请补充与课题直接相关的真实参考文献。")
     return "\n".join(lines).strip() + "\n"
 
@@ -316,7 +334,8 @@ def main():
                 items.extend(crossref_items(term, args.rows, args.timeout))
             except Exception as exc:  # noqa: BLE001 - best effort reference retrieval.
                 print(f"WARN: Crossref query failed for {term!r}: {exc}")
-        bibtex = "\n\n".join(bib_from_crossref_item(item, idx) for idx, item in enumerate(dedupe_items(items)[:args.rows], 1))
+        generated = [bib_from_crossref_item(item, idx) for idx, item in enumerate(dedupe_items(items), 1)]
+        bibtex = "\n\n".join([item for item in generated if item.strip()][:args.rows])
 
     if not bibtex.strip():
         bibtex = "@misc{todo_references,\n  title = {TODO: 补充与课题直接相关的真实参考文献},\n  year = {2026}\n}\n"

@@ -19,6 +19,7 @@ STANDARD_TABLE_STYLE = "aff4"
 TABLE_CONTENT_STYLE = "aff0"
 CAPTION_STYLE = "aff5"
 TITLE_STYLE = "af4"
+REFERENCE_TEXT_STYLE = "a"
 TOC_STYLE_MAP = {
     "TOC1": "10",
     "TOC2": "21",
@@ -90,6 +91,34 @@ def text_run(text):
     node = ET.SubElement(run, qn("w:t"))
     node.text = text
     return run
+
+
+def ensure_run_properties(run):
+    r_pr = run.find(qn("w:rPr"))
+    if r_pr is None:
+        r_pr = ET.Element(qn("w:rPr"))
+        run.insert(0, r_pr)
+    return r_pr
+
+
+def set_reference_run_font(run):
+    r_pr = ensure_run_properties(run)
+    fonts = r_pr.find(qn("w:rFonts"))
+    if fonts is None:
+        fonts = ET.SubElement(r_pr, qn("w:rFonts"))
+    set_attr(fonts, "w:ascii", "Times New Roman")
+    set_attr(fonts, "w:hAnsi", "Times New Roman")
+    set_attr(fonts, "w:eastAsia", "\u5b8b\u4f53")
+
+    size = r_pr.find(qn("w:sz"))
+    if size is None:
+        size = ET.SubElement(r_pr, qn("w:sz"))
+    set_attr(size, "w:val", "21")
+
+    size_cs = r_pr.find(qn("w:szCs"))
+    if size_cs is None:
+        size_cs = ET.SubElement(r_pr, qn("w:szCs"))
+    set_attr(size_cs, "w:val", "21")
 
 
 def eq_bookmark(number):
@@ -444,6 +473,37 @@ def apply_toc_styles(root):
     return changed
 
 
+def is_heading_one(paragraph):
+    return paragraph.tag == qn("w:p") and style_id(paragraph) == "1"
+
+
+def apply_reference_styles(root):
+    body = root.find("w:body", NS)
+    if body is None:
+        return 0
+    changed = 0
+    in_references = False
+    for child in body:
+        if child.tag != qn("w:p"):
+            continue
+        text = paragraph_text(child).strip()
+        if is_heading_one(child):
+            if text == "\u53c2\u8003\u6587\u732e":
+                in_references = True
+                continue
+            if in_references:
+                break
+        if not in_references or not text:
+            continue
+        if style_id(child) != REFERENCE_TEXT_STYLE:
+            set_paragraph_style(child, REFERENCE_TEXT_STYLE)
+            changed += 1
+        for run in child.findall("w:r", NS):
+            set_reference_run_font(run)
+            changed += 1
+    return changed
+
+
 def replace_equation_tables(parent):
     changed = 0
     for index, child in enumerate(list(parent)):
@@ -468,6 +528,7 @@ def postprocess_document_xml(xml_text):
     changed += apply_table_content_style(root)
     changed += add_caption_bookmarks(root)
     changed += apply_toc_styles(root)
+    changed += apply_reference_styles(root)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True), changed
 
 

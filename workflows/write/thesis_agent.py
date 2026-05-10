@@ -44,6 +44,7 @@ PLAN_FILE = WORK / ASSEMBLY.get("plan_file", "thesis/section_plan.json")
 THESIS_FILE = WORK / ASSEMBLY.get("output_markdown", "output/thesis.md")
 MIN_WORD_COUNT = int(ASSEMBLY.get("min_word_count", 25000) or 25000)
 REFERENCES_FILE = WORK / CONFIG.get("references", {}).get("output_markdown", "thesis/references.md")
+ACKNOWLEDGEMENT_FILE = BASE / "acknowledgement.md"
 
 THESIS_TITLE = CONFIG.get("project", {}).get("title", "未命名论文")
 DEFAULT_SECTION_ORDER = [
@@ -267,6 +268,25 @@ def append_references(parts):
         parts.insert(ack_index, content)
 
 
+def append_acknowledgement(parts):
+    joined = "\n\n".join(parts)
+    if re.search(r"(?m)^#\s*致谢\s*$", joined):
+        return
+    if ACKNOWLEDGEMENT_FILE.exists():
+        content = ACKNOWLEDGEMENT_FILE.read_text(encoding="utf-8-sig", errors="ignore").strip()
+    else:
+        content = (
+            "# 致谢\n\n"
+            "大学本科阶段的学习和本次毕业设计工作即将结束。论文从选题、资料整理、方案设计、系统实现到测试分析，"
+            "都离不开指导教师的耐心指导和同学、家人的支持。在此向所有给予帮助的人表示诚挚感谢。\n\n"
+            "感谢指导教师在论文选题、研究思路、系统设计和论文修改过程中给予的细致指导，使本文能够逐步完善。"
+            "感谢同学在资料查找、实验调试和问题讨论中提供的帮助。感谢家人在学习和生活中给予的理解与支持。\n\n"
+            "由于本人能力和经验有限，论文中仍可能存在不足之处，恳请各位老师批评指正。"
+        )
+    if content:
+        parts.append(content)
+
+
 def cmd_assemble():
     OUTPUT_DIR.mkdir(exist_ok=True)
     parts = [f"# {THESIS_TITLE}\n"]
@@ -290,6 +310,7 @@ def cmd_assemble():
             parts.append(content)
 
     append_references(parts)
+    append_acknowledgement(parts)
     assembled = "\n\n".join(parts) + "\n"
     THESIS_FILE.write_text(assembled, encoding="utf-8")
     print(f"Assembled -> {THESIS_FILE}")
