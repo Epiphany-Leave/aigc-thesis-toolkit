@@ -5,6 +5,9 @@ import argparse
 import json
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 import urllib.error
 import urllib.request
 import zipfile
@@ -18,7 +21,10 @@ WORK = Path(__file__).resolve().parents[2]
 CONFIG_FILE = WORK / "configs" / "default.yaml"
 LOCAL_CONFIG_FILE = WORK / "configs" / "local.yaml"
 TEXT_SUFFIXES = {".md", ".txt", ".csv", ".bib", ".tex", ".json", ".yaml", ".yml", ".log"}
-OFFICE_TEXT_SUFFIXES = {".docx", ".xlsx"}
+OFFICE_TEXT_SUFFIXES = {".doc", ".docx", ".xlsx"}
+PDF_SUFFIXES = {".pdf"}
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
+BINARY_STRING_SUFFIXES = {".epro", ".schdoc", ".pcbdoc", ".prjpcb", ".json", ".xml"}
 MAX_EXTRACT_CHARS_PER_FILE = 80000
 MAX_EXTRACT_CHARS_PER_CHUNK = 16000
 
@@ -70,6 +76,64 @@ def read_text_content(path, limit=MAX_EXTRACT_CHARS_PER_FILE):
         return ""
 
 
+def command_exists(name):
+    return shutil.which(name) is not None
+
+
+def clean_extracted_text(text, limit=MAX_EXTRACT_CHARS_PER_FILE):
+    text = text.replace("\x00", "")
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()[:limit]
+
+
+def run_text_command(command, timeout=60):
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return result.stdout if result.returncode == 0 else ""
+
+
+def extract_binary_strings(path, limit=MAX_EXTRACT_CHARS_PER_FILE):
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return ""
+    parts = []
+    for encoding in ("utf-16le", "utf-16be", "gb18030", "utf-8"):
+        try:
+            text = data.decode(encoding, errors="ignore")
+        except LookupError:
+            continue
+        # Keep readable runs containing Chinese, Latin words, digits, or common punctuation.
+        runs = re.findall(r"[\u4e00-\u9fffA-Za-z0-9，。；：、（）《》“”\"'\-_/%.℃±=+:\s]{8,}", text)
+        for run in runs:
+            cleaned = clean_extracted_text(run, limit=2000)
+            if cleaned and len(cleaned) >= 8:
+                parts.append(cleaned)
+        if sum(len(item) for item in parts) >= limit:
+            break
+    deduped = []
+    seen = set()
+    for item in parts:
+        key = item[:120]
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return clean_extracted_text("\n".join(deduped), limit=limit)
+
+
 def xml_text(path, names, limit=12000):
     parts = []
     try:
@@ -102,8 +166,59 @@ def read_xlsx_sample(path, limit=MAX_EXTRACT_CHARS_PER_FILE):
     return xml_text(path, names, limit=limit)
 
 
+def read_doc_sample(path, limit=MAX_EXTRACT_CHARS_PER_FILE):
+    # Some .doc files are actually renamed .docx files.
+    if zipfile.is_zipfile(path):
+        text = read_docx_sample(path, limit=limit)
+        if text.strip():
+            return text
+    if command_exists("antiword"):
+        text = run_text_command(["antiword", str(path)])
+        if text.strip():
+            return clean_extracted_text(text, limit)
+    if command_exists("catdoc"):
+        text = run_text_command(["catdoc", "-w", str(path)])
+        if text.strip():
+            return clean_extracted_text(text, limit)
+    return extract_binary_strings(path, limit=limit)
+
+
+def read_pdf_sample(path, limit=MAX_EXTRACT_CHARS_PER_FILE):
+    if command_exists("pdftotext"):
+        text = run_text_command(["pdftotext", "-layout", "-enc", "UTF-8", str(path), "-"], timeout=90)
+        if text.strip():
+            return clean_extracted_text(text, limit)
+    return ""
+
+
+def read_image_ocr_sample(path, limit=MAX_EXTRACT_CHARS_PER_FILE):
+    if not command_exists("tesseract"):
+        return ""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_base = Path(tmpdir) / "ocr"
+        try:
+            result = subprocess.run(
+                ["tesseract", str(path), str(output_base), "-l", "chi_sim+eng"],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=120,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return ""
+        output_path = output_base.with_suffix(".txt")
+        if result.returncode != 0 or not output_path.exists():
+            return ""
+        return clean_extracted_text(output_path.read_text(encoding="utf-8", errors="ignore"), limit)
+
+
 def read_office_sample(path):
     suffix = path.suffix.lower()
+    if suffix == ".doc":
+        return read_doc_sample(path)
     if suffix == ".docx":
         return read_docx_sample(path)
     if suffix == ".xlsx":
@@ -131,6 +246,24 @@ def scan_user_data_entries(user_data_dir):
                 entries.append({"path": relative, "type": "Office 可抽取文本", "size": size, "content": sample, "readable": True})
             else:
                 entries.append({"path": relative, "type": "Office 文件", "size": size, "content": "", "readable": False})
+        elif suffix in PDF_SUFFIXES:
+            sample = read_pdf_sample(path)
+            if sample.strip():
+                entries.append({"path": relative, "type": "PDF 可抽取文本", "size": size, "content": sample, "readable": True})
+            else:
+                entries.append({"path": relative, "type": "PDF 扫描件或不可抽取文本", "size": size, "content": "", "readable": False})
+        elif suffix in IMAGE_SUFFIXES:
+            sample = read_image_ocr_sample(path)
+            if sample.strip():
+                entries.append({"path": relative, "type": "图片 OCR 文本", "size": size, "content": sample, "readable": True})
+            else:
+                entries.append({"path": relative, "type": "图片文件", "size": size, "content": "", "readable": False})
+        elif suffix in BINARY_STRING_SUFFIXES:
+            sample = extract_binary_strings(path)
+            if sample.strip():
+                entries.append({"path": relative, "type": "工程/二进制可恢复字符串", "size": size, "content": sample, "readable": True})
+            else:
+                entries.append({"path": relative, "type": "工程/二进制文件", "size": size, "content": "", "readable": False})
         else:
             entries.append({"path": relative, "type": "二进制/PDF/图片/工程文件", "size": size, "content": "", "readable": False})
     return entries
@@ -190,7 +323,7 @@ def build_messages(project_title, inventory):
 1. 一级标题为“# 个人资料索引”。
 2. 按“课题信息”“可用文本资料”“可用图表/仿真/实验资料”“参考文献线索”“缺口与待补充资料”组织。
 3. 每条资料必须保留可追踪文件路径。
-4. 对已经抽取出文本的 Office 文件，可以基于抽取片段总结；对无法抽取文本的 PDF、图片、二进制文件，只能根据文件名和路径判断用途，不要声称已读取其中内容。
+4. 对已经抽取出文本的 Office、PDF、OCR 或工程字符串内容，可以基于抽取片段总结；对仍无法抽取正文的 PDF、图片、二进制文件，只能根据文件名和路径判断用途，不要声称已读取其中内容。
 5. 如果资料不足，明确写出缺口，不要补造参数、实验或结论。
 """,
         },

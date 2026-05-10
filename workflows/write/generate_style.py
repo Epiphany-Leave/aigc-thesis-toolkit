@@ -5,6 +5,9 @@ import argparse
 import json
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 import urllib.error
 import urllib.request
 import zipfile
@@ -18,7 +21,10 @@ WORK = Path(__file__).resolve().parents[2]
 CONFIG_FILE = WORK / "configs" / "default.yaml"
 LOCAL_CONFIG_FILE = WORK / "configs" / "local.yaml"
 TEXT_SUFFIXES = {".md", ".txt", ".csv", ".bib", ".tex", ".json", ".yaml", ".yml"}
-OFFICE_TEXT_SUFFIXES = {".docx", ".xlsx"}
+OFFICE_TEXT_SUFFIXES = {".doc", ".docx", ".xlsx"}
+PDF_SUFFIXES = {".pdf"}
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
+MAX_SAMPLE_CHARS = 60000
 
 
 def deep_merge(base, override):
@@ -61,6 +67,59 @@ def read_text_sample(path, limit=9000):
         return ""
 
 
+def command_exists(name):
+    return shutil.which(name) is not None
+
+
+def clean_extracted_text(text, limit=MAX_SAMPLE_CHARS):
+    text = text.replace("\x00", "")
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()[:limit]
+
+
+def run_text_command(command, timeout=60):
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return result.stdout if result.returncode == 0 else ""
+
+
+def extract_binary_strings(path, limit=MAX_SAMPLE_CHARS):
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return ""
+    parts = []
+    for encoding in ("utf-16le", "utf-16be", "gb18030", "utf-8"):
+        text = data.decode(encoding, errors="ignore")
+        runs = re.findall(r"[\u4e00-\u9fffA-Za-z0-9，。；：、（）《》“”\"'\-_/%.℃±=+:\s]{8,}", text)
+        parts.extend(clean_extracted_text(run, limit=1800) for run in runs)
+        if sum(len(item) for item in parts) >= limit:
+            break
+    deduped = []
+    seen = set()
+    for item in parts:
+        if not item:
+            continue
+        key = item[:120]
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return clean_extracted_text("\n".join(deduped), limit=limit)
+
+
 def xml_text(path, names, limit=12000):
     parts = []
     try:
@@ -80,9 +139,24 @@ def xml_text(path, names, limit=12000):
 
 
 def read_office_sample(path):
-    if path.suffix.lower() == ".docx":
+    suffix = path.suffix.lower()
+    if suffix == ".doc":
+        if zipfile.is_zipfile(path):
+            text = xml_text(path, ["word/document.xml"], limit=MAX_SAMPLE_CHARS)
+            if text.strip():
+                return text
+        if command_exists("antiword"):
+            text = run_text_command(["antiword", str(path)])
+            if text.strip():
+                return clean_extracted_text(text)
+        if command_exists("catdoc"):
+            text = run_text_command(["catdoc", "-w", str(path)])
+            if text.strip():
+                return clean_extracted_text(text)
+        return extract_binary_strings(path)
+    if suffix == ".docx":
         return xml_text(path, ["word/document.xml"])
-    if path.suffix.lower() == ".xlsx":
+    if suffix == ".xlsx":
         try:
             with zipfile.ZipFile(path) as archive:
                 names = ["xl/sharedStrings.xml"]
@@ -91,6 +165,36 @@ def read_office_sample(path):
             return ""
         return xml_text(path, names)
     return ""
+
+
+def read_pdf_sample(path):
+    if not command_exists("pdftotext"):
+        return ""
+    return clean_extracted_text(run_text_command(["pdftotext", "-layout", "-enc", "UTF-8", str(path), "-"], timeout=90))
+
+
+def read_image_ocr_sample(path):
+    if not command_exists("tesseract"):
+        return ""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_base = Path(tmpdir) / "ocr"
+        try:
+            result = subprocess.run(
+                ["tesseract", str(path), str(output_base), "-l", "chi_sim+eng"],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=120,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return ""
+        output_path = output_base.with_suffix(".txt")
+        if result.returncode != 0 or not output_path.exists():
+            return ""
+        return clean_extracted_text(output_path.read_text(encoding="utf-8", errors="ignore"))
 
 
 def scan_user_data(user_data_dir):
@@ -112,6 +216,18 @@ def scan_user_data(user_data_dir):
                 entries.append(f"## {relative}\n类型：Office 可抽取文本；大小：{size} bytes\n\n{sample}")
             else:
                 entries.append(f"## {relative}\n类型：Office 文件；大小：{size} bytes；未能抽取正文，只能作为文件名线索。\n")
+        elif suffix in PDF_SUFFIXES:
+            sample = read_pdf_sample(path)
+            if sample.strip():
+                entries.append(f"## {relative}\n类型：PDF 可抽取文本；大小：{size} bytes\n\n{sample}")
+            else:
+                entries.append(f"## {relative}\n类型：PDF 扫描件或不可抽取文本；大小：{size} bytes\n")
+        elif suffix in IMAGE_SUFFIXES:
+            sample = read_image_ocr_sample(path)
+            if sample.strip():
+                entries.append(f"## {relative}\n类型：图片 OCR 文本；大小：{size} bytes\n\n{sample}")
+            else:
+                entries.append(f"## {relative}\n类型：图片文件；大小：{size} bytes；未安装 tesseract 时只能作为图片线索。\n")
         else:
             entries.append(f"## {relative}\n类型：二进制/Office/PDF/图片等；大小：{size} bytes\n")
     return "\n\n".join(entries)[:70000] if entries else "user_data 目录为空。"
@@ -152,7 +268,7 @@ user_data 扫描结果：
 1. 一级标题为“# 写作与格式规范”。
 2. 至少包含：整体文风、章节结构、标题层级、公式、图题、表题、引用、数据真实性、Word 导出注意事项。
 3. 如果资料中出现学校模板、任务书、开题报告、中期报告、范例论文，请提取其中能确定的写作规范。
-4. 对已经抽取出文本的 Office 文件，可以基于抽取片段总结；对无法抽取文本的 PDF、图片、二进制文件，只能依据文件名判断可能用途，不要声称已读取其中内容。
+4. 对已经抽取出文本的 Office、PDF、OCR 内容，可以基于抽取片段总结；对无法抽取文本的 PDF、图片、二进制文件，只能依据文件名判断可能用途，不要声称已读取其中内容。
 5. 不要输出代码块。
 """,
         },
