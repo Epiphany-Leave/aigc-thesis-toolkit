@@ -26,6 +26,14 @@ SOURCE_CODE_SUFFIXES = {
     ".h",
     ".cpp",
     ".hpp",
+    ".cc",
+    ".cxx",
+    ".hh",
+    ".ino",
+    ".py",
+    ".java",
+    ".js",
+    ".ts",
     ".s",
     ".asm",
     ".uvprojx",
@@ -33,6 +41,42 @@ SOURCE_CODE_SUFFIXES = {
     ".uvguix",
     ".dbgconf",
     ".orig",
+}
+SKIP_DIR_NAMES = {
+    ".git",
+    ".svn",
+    "__pycache__",
+    "node_modules",
+    ".venv",
+    "venv",
+    "build",
+    "dist",
+    "objects",
+    "listings",
+    "debug",
+    "release",
+}
+SKIP_FILE_SUFFIXES = {
+    ".o",
+    ".obj",
+    ".d",
+    ".dep",
+    ".crf",
+    ".lst",
+    ".map",
+    ".axf",
+    ".elf",
+    ".hex",
+    ".bin",
+    ".lib",
+    ".a",
+    ".dll",
+    ".exe",
+    ".pdb",
+    ".ilk",
+    ".zip",
+    ".rar",
+    ".7z",
 }
 OFFICE_TEXT_SUFFIXES = {".doc", ".docx", ".xlsx"}
 PDF_SUFFIXES = {".pdf"}
@@ -461,6 +505,13 @@ def make_entry(path, relative, kind, size, content, readable, repaired=False, sk
     }
 
 
+def should_skip_path(path, user_data_dir):
+    relative_parts = path.relative_to(user_data_dir).parts
+    if any(part.lower() in SKIP_DIR_NAMES for part in relative_parts[:-1]):
+        return True
+    return path.suffix.lower() in SKIP_FILE_SUFFIXES
+
+
 def summarize_source_file(path, relative):
     text = read_text_content(path, limit=40000)
     if not text.strip():
@@ -546,6 +597,9 @@ def scan_user_data_entries_v2(user_data_dir):
 
     for path in sorted(user_data_dir.rglob("*")):
         if path.is_dir() or path.name in {"resources.md", "extraction_report.md"}:
+            continue
+        if should_skip_path(path, user_data_dir):
+            log_extract(path, "skipped generated/build/cache/binary artifact")
             continue
         raw_relative = path.relative_to(user_data_dir).as_posix()
         relative, repaired = repaired_multipart_relative(raw_relative)
@@ -759,6 +813,23 @@ def write_extraction_report(entries):
     EXTRACTION_REPORT.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
 
 
+def fallback_resources(project_title, inventory, reason):
+    return f"""# 个人资料索引
+
+## 课题信息
+- **论文题目**：{project_title or "未配置"}
+
+## 自动资料抽取结果
+资源扫描已完成，但最终汇总阶段未能调用 AI 完成润色。
+
+- **失败原因**：{reason}
+- **处理方式**：已保留逐文件抽取结果，后续大纲和正文仍可参考这些可追踪资料。
+- **诊断报告**：`user_data/extraction_report.md`
+
+{inventory}
+"""
+
+
 def chat_completion(base, key, model, messages, timeout):
     request = urllib.request.Request(
         f"{base}/chat/completions",
@@ -800,13 +871,18 @@ def main():
     timeout = int(config.get("engines", {}).get("generation", {}).get("batch", {}).get("request_timeout_seconds", 180))
     entries = scan_user_data_entries(user_data_dir)
     inventory = ai_extract_inventory(config, entries, base, key, model, timeout) if entries else "user_data 目录为空。"
-    content = chat_completion(
-        base,
-        key,
-        model,
-        build_messages(config.get("project", {}).get("title", ""), inventory),
-        timeout,
-    )
+    project_title = config.get("project", {}).get("title", "")
+    try:
+        content = chat_completion(
+            base,
+            key,
+            model,
+            build_messages(project_title, inventory),
+            timeout,
+        )
+    except RuntimeError as exc:
+        print(f"WARN: final resources summary failed: {exc}")
+        content = fallback_resources(project_title, inventory, str(exc))
     output_path.write_text(content.strip() + "\n", encoding="utf-8")
     print(f"OK: generated {output_path}")
     return 0
