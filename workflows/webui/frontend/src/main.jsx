@@ -131,6 +131,10 @@ function App() {
   const currentName = status.current?.subsection_title || status.current?.title || "无";
   const runnerOutput = status.runner?.output || [];
 
+  function dragHasFiles(event) {
+    return Array.from(event.dataTransfer?.types || []).includes("Files");
+  }
+
   async function refresh({ keepForms = true } = {}) {
     const response = await fetch("/api/status");
     const data = await response.json();
@@ -145,6 +149,37 @@ function App() {
     refresh({ keepForms: false });
     const timer = setInterval(() => refresh({ keepForms: true }), 5000);
     return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    function preventFileOpen(event) {
+      if (!dragHasFiles(event)) return;
+      event.preventDefault();
+      if (event.type === "dragenter" || event.type === "dragover") {
+        setDragActive(true);
+      }
+      if (event.type === "drop") {
+        setDragActive(false);
+        if (!event.defaultPrevented) {
+          setNotice("请把文件拖入“资料导入”窗口。");
+        }
+      }
+    }
+    function handleWindowDragLeave(event) {
+      if (event.clientX <= 0 || event.clientY <= 0 || event.clientX >= window.innerWidth || event.clientY >= window.innerHeight) {
+        setDragActive(false);
+      }
+    }
+    window.addEventListener("dragenter", preventFileOpen);
+    window.addEventListener("dragover", preventFileOpen);
+    window.addEventListener("drop", preventFileOpen);
+    window.addEventListener("dragleave", handleWindowDragLeave);
+    return () => {
+      window.removeEventListener("dragenter", preventFileOpen);
+      window.removeEventListener("dragover", preventFileOpen);
+      window.removeEventListener("drop", preventFileOpen);
+      window.removeEventListener("dragleave", handleWindowDragLeave);
+    };
   }, []);
 
   useEffect(() => {
@@ -258,6 +293,7 @@ function App() {
 
   async function handleDrop(event) {
     event.preventDefault();
+    event.stopPropagation();
     setDragActive(false);
     const entries = await collectDroppedFiles(event.dataTransfer);
     await uploadFileEntries(entries);
@@ -365,21 +401,35 @@ function App() {
             </Panel>
 
             <Panel title="资料导入" icon={<FolderUp size={18} />}>
-              <form className="upload-layout" onSubmit={uploadFiles}>
+              <form
+                className="upload-layout"
+                onSubmit={uploadFiles}
+                onDragEnter={(event) => { if (dragHasFiles(event)) { event.preventDefault(); setDragActive(true); } }}
+                onDragOver={(event) => { if (dragHasFiles(event)) { event.preventDefault(); setDragActive(true); } }}
+                onDrop={handleDrop}
+              >
                 <div
                   className={`drop-zone ${dragActive ? "drag-active" : ""}`}
-                  onDragEnter={(event) => { event.preventDefault(); setDragActive(true); }}
-                  onDragOver={(event) => { event.preventDefault(); setDragActive(true); }}
+                  role="button"
+                  tabIndex="0"
+                  onClick={() => fileInputRef.current?.click()}
+                  onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") fileInputRef.current?.click(); }}
+                  onDragEnter={(event) => { if (dragHasFiles(event)) { event.preventDefault(); setDragActive(true); } }}
+                  onDragOver={(event) => { if (dragHasFiles(event)) { event.preventDefault(); setDragActive(true); } }}
                   onDragLeave={(event) => { event.preventDefault(); setDragActive(false); }}
                   onDrop={handleDrop}
                 >
                   <UploadCloud size={34} />
                   <strong>拖拽文件或文件夹到这里</strong>
                   <span>也可以用下方按钮选择。优先上传 Markdown/TXT/CSV/DOCX/XLSX，PDF、图片和仿真源文件建议另存关键说明文本。</span>
+                  <div className="drop-actions">
+                    <button type="button" onClick={(event) => { event.stopPropagation(); fileInputRef.current?.click(); }}>选择文件</button>
+                    <button type="button" onClick={(event) => { event.stopPropagation(); folderInputRef.current?.click(); }}>选择文件夹</button>
+                  </div>
                 </div>
                 <div className="upload-inputs">
-                  <label>选择文件<input ref={fileInputRef} type="file" multiple /></label>
-                  <label>选择文件夹<input ref={folderInputRef} type="file" webkitdirectory="true" directory="" multiple /></label>
+                  <input ref={fileInputRef} type="file" multiple />
+                  <input ref={folderInputRef} type="file" webkitdirectory="true" directory="" multiple />
                 </div>
                 <div className="examples">
                   <span>任务书/开题报告 DOCX</span><span>学校规范 TXT/MD</span><span>参考文献 BibTeX</span><span>实验数据 CSV/XLSX</span><span>仿真结果表格</span><span>硬件参数说明 MD</span>

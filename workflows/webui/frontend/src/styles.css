@@ -275,6 +275,16 @@ label {
   color: #654c8f;
   text-align: center;
   background: linear-gradient(135deg, rgba(255, 255, 255, .9), rgba(255, 232, 246, .76));
+  cursor: pointer;
+  transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, background .16s ease;
+}
+
+.drop-zone:hover,
+.drop-zone.drag-active {
+  border-color: #7b61ff;
+  background: linear-gradient(135deg, rgba(255, 246, 252, .98), rgba(224, 252, 255, .9));
+  box-shadow: 0 14px 34px rgba(123, 97, 255, .18);
+  transform: translateY(-1px);
 }
 
 .drop-zone span {
@@ -282,10 +292,21 @@ label {
   font-size: 13px;
 }
 
+.drop-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 9px;
+  margin-top: 6px;
+}
+
 .upload-inputs {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .examples {
