@@ -104,12 +104,53 @@ def run_text_command(command, timeout=60):
     return result.stdout if result.returncode == 0 else ""
 
 
+def convert_with_libreoffice(path, target_ext, limit=MAX_EXTRACT_CHARS_PER_FILE):
+    executable = shutil.which("libreoffice") or shutil.which("soffice")
+    if not executable:
+        return ""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        try:
+            result = subprocess.run(
+                [executable, "--headless", "--convert-to", target_ext, "--outdir", tmpdir, str(path)],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=120,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return ""
+        if result.returncode != 0:
+            return ""
+        converted = sorted(Path(tmpdir).glob(f"*.{target_ext.split(':', 1)[0]}"))
+        if not converted:
+            return ""
+        return clean_extracted_text(converted[0].read_text(encoding="utf-8", errors="ignore"), limit)
+
+
+def printable_byte_runs(data, limit=MAX_EXTRACT_CHARS_PER_FILE):
+    parts = []
+    for run in re.findall(rb"[\x09\x0a\x0d\x20-\x7e\x80-\xff]{12,}", data):
+        for encoding in ("gb18030", "utf-8", "latin1"):
+            text = run.decode(encoding, errors="ignore")
+            if re.search(r"[\u4e00-\u9fff]", text) or len(re.findall(r"[A-Za-z]{4,}", text)) >= 3:
+                cleaned = clean_extracted_text(text, limit=1800)
+                if cleaned:
+                    parts.append(cleaned)
+                break
+        if sum(len(item) for item in parts) >= limit:
+            break
+    return parts
+
+
 def extract_binary_strings(path, limit=MAX_EXTRACT_CHARS_PER_FILE):
     try:
         data = path.read_bytes()
     except OSError:
         return ""
-    parts = []
+    parts = printable_byte_runs(data, limit=limit)
     for encoding in ("utf-16le", "utf-16be", "gb18030", "utf-8"):
         try:
             text = data.decode(encoding, errors="ignore")
@@ -172,6 +213,9 @@ def read_doc_sample(path, limit=MAX_EXTRACT_CHARS_PER_FILE):
         text = read_docx_sample(path, limit=limit)
         if text.strip():
             return text
+    converted = convert_with_libreoffice(path, "txt:Text", limit=limit)
+    if converted.strip():
+        return converted
     if command_exists("antiword"):
         text = run_text_command(["antiword", str(path)])
         if text.strip():
@@ -349,6 +393,7 @@ def build_extract_messages(project_title, entry, chunk, index, total):
 
 请提取：
 - 与课题直接相关的事实、参数、器件型号、实验条件、测试数据、结论
+- 文档中出现的参考文献、引用编号、文献题名、作者、期刊/会议、年份、DOI 或 URL
 - 可作为图表、公式、章节内容依据的信息
 - 文件中明确提到但仍需人工核查的点
 - 资料缺口

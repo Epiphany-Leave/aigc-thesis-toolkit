@@ -57,7 +57,7 @@ sudo apt update
 sudo apt install -y poppler-utils antiword catdoc tesseract-ocr tesseract-ocr-chi-sim
 ```
 
-其中 `poppler-utils` 提供 `pdftotext`，用于抽取可复制文本的 PDF；`antiword/catdoc` 用于读取老版 `.doc`；`tesseract` 用于图片 OCR。没有安装这些工具时，系统仍会尽量读取 DOCX/XLSX/TXT/CSV，并对 `.doc` 或部分工程文件做二进制字符串恢复，但效果会弱一些。
+其中 `poppler-utils` 提供 `pdftotext`，用于抽取可复制文本的 PDF；`antiword/catdoc` 用于读取老版 `.doc`；`tesseract` 用于图片 OCR。也可以安装 `libreoffice`，系统会优先尝试把老版 `.doc` 转成文本。没有安装这些工具时，系统仍会尽量读取 DOCX/XLSX/TXT/CSV，并对 `.doc` 或部分工程文件做二进制字符串恢复，但效果会弱一些。
 
 安装并构建 React WebUI：
 
@@ -172,7 +172,7 @@ thesis/style.md
 - “继续”：取消暂停标记。
 - “自动规范”：扫描资料并生成 `thesis/style.md`。
 - “资料索引”：重新扫描 `user_data/`，生成 `user_data/resources.md`。
-- “参考文献”：优先读取上传的 `.bib`，没有 BibTeX 时尝试通过 Crossref 自动检索，生成 `user_data/references.bib` 和 `thesis/references.md`。
+- “参考文献”：优先读取上传的 `.bib`；没有 BibTeX 时会先从开题报告、中期报告等资料的“参考文献”段落提取；仍没有结果时再尝试通过 Crossref 自动检索，生成 `user_data/references.bib` 和 `thesis/references.md`。
 - “重建大纲”：根据资料和规范重新生成 `thesis/outline.md`。
 - “写作计划”：根据大纲生成 `thesis/section_plan.json`。
 - “构建 Word”：把 Markdown 合并并导出 `output/thesis.docx`。

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -16,6 +17,9 @@ import yaml
 WORK = Path(__file__).resolve().parents[2]
 CONFIG_FILE = WORK / "configs" / "default.yaml"
 LOCAL_CONFIG_FILE = WORK / "configs" / "local.yaml"
+sys.path.insert(0, str(WORK))
+
+from workflows.write.generate_resources import scan_user_data_entries  # noqa: E402
 
 
 def deep_merge(base, override):
@@ -60,6 +64,82 @@ def find_uploaded_bibtex(user_data_dir):
     return "\n\n".join(parts)
 
 
+def extract_reference_lines(text):
+    lines = text.splitlines()
+    blocks = []
+    for index, line in enumerate(lines):
+        if re.search(r"(参考文献|references)", line, flags=re.I):
+            block = []
+            for candidate in lines[index + 1:index + 80]:
+                stripped = candidate.strip()
+                if not stripped:
+                    if block:
+                        block.append("")
+                    continue
+                if re.match(r"^#{1,6}\s+", stripped) and block:
+                    break
+                if re.search(r"(致谢|附录|appendix)", stripped, flags=re.I) and block:
+                    break
+                block.append(stripped)
+            if block:
+                blocks.extend(block)
+    if not blocks:
+        return []
+
+    refs = []
+    current = ""
+    for line in blocks:
+        if not line:
+            continue
+        starts_ref = re.match(r"^(\[\d+\]|\d+[.、]|[（(]\d+[）)])\s*", line)
+        if starts_ref:
+            if current:
+                refs.append(current.strip())
+            current = re.sub(r"^(\[\d+\]|\d+[.、]|[（(]\d+[）)])\s*", "", line).strip()
+        elif current:
+            current += " " + line
+        elif re.search(r"\d{4}", line) and len(line) > 12:
+            refs.append(line)
+    if current:
+        refs.append(current.strip())
+
+    cleaned = []
+    seen = set()
+    for ref in refs:
+        ref = clean_text(ref).strip("[] ")
+        if len(ref) < 10 or ref in seen:
+            continue
+        seen.add(ref)
+        cleaned.append(ref)
+    return cleaned
+
+
+def find_references_in_user_data(user_data_dir):
+    refs = []
+    for entry in scan_user_data_entries(user_data_dir):
+        content = entry.get("content") or ""
+        if not content:
+            continue
+        for ref in extract_reference_lines(content):
+            refs.append((entry["path"], ref))
+    return refs
+
+
+def bib_from_reference_lines(refs):
+    entries = []
+    for index, (source, ref) in enumerate(refs, start=1):
+        key = f"userref{index:02d}"
+        year = re.search(r"(19|20)\d{2}", ref)
+        fields = [
+            f"  title = {{{bib_escape(ref)}}}",
+            f"  note = {{{bib_escape('来源：' + source)}}}",
+        ]
+        if year:
+            fields.append(f"  year = {{{year.group(0)}}}")
+        entries.append(f"@misc{{{key},\n" + ",\n".join(fields) + "\n}")
+    return "\n\n".join(entries)
+
+
 def parse_bib_entries(bibtex):
     entries = []
     for match in re.finditer(r"@(\w+)\s*\{\s*([^,]+)\s*,(.*?)(?=\n@\w+\s*\{|\Z)", bibtex, flags=re.S):
@@ -91,6 +171,7 @@ def author_text(authors):
 
 
 def format_reference_from_fields(fields):
+    note = clean_text(fields.get("note"))
     authors = author_text(fields.get("author", ""))
     title = clean_text(fields.get("title"))
     journal = clean_text(fields.get("journal") or fields.get("journaltitle") or fields.get("booktitle"))
@@ -113,6 +194,8 @@ def format_reference_from_fields(fields):
         result += " " + ", ".join(tail) + "."
     if doi:
         result += f" DOI: {doi}."
+    if note.startswith("来源："):
+        result += f" {note}."
     return result
 
 
@@ -221,6 +304,11 @@ def main():
     user_data_dir.mkdir(parents=True, exist_ok=True)
     thesis_dir.mkdir(parents=True, exist_ok=True)
     bibtex = find_uploaded_bibtex(user_data_dir)
+    if not bibtex.strip():
+        refs = find_references_in_user_data(user_data_dir)
+        if refs:
+            bibtex = bib_from_reference_lines(refs)
+
     if not bibtex.strip():
         items = []
         for term in query_terms(config):

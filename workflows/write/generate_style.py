@@ -95,12 +95,53 @@ def run_text_command(command, timeout=60):
     return result.stdout if result.returncode == 0 else ""
 
 
+def convert_with_libreoffice(path, target_ext, limit=MAX_SAMPLE_CHARS):
+    executable = shutil.which("libreoffice") or shutil.which("soffice")
+    if not executable:
+        return ""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        try:
+            result = subprocess.run(
+                [executable, "--headless", "--convert-to", target_ext, "--outdir", tmpdir, str(path)],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=120,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return ""
+        if result.returncode != 0:
+            return ""
+        converted = sorted(Path(tmpdir).glob(f"*.{target_ext.split(':', 1)[0]}"))
+        if not converted:
+            return ""
+        return clean_extracted_text(converted[0].read_text(encoding="utf-8", errors="ignore"), limit)
+
+
+def printable_byte_runs(data, limit=MAX_SAMPLE_CHARS):
+    parts = []
+    for run in re.findall(rb"[\x09\x0a\x0d\x20-\x7e\x80-\xff]{12,}", data):
+        for encoding in ("gb18030", "utf-8", "latin1"):
+            text = run.decode(encoding, errors="ignore")
+            if re.search(r"[\u4e00-\u9fff]", text) or len(re.findall(r"[A-Za-z]{4,}", text)) >= 3:
+                cleaned = clean_extracted_text(text, limit=1800)
+                if cleaned:
+                    parts.append(cleaned)
+                break
+        if sum(len(item) for item in parts) >= limit:
+            break
+    return parts
+
+
 def extract_binary_strings(path, limit=MAX_SAMPLE_CHARS):
     try:
         data = path.read_bytes()
     except OSError:
         return ""
-    parts = []
+    parts = printable_byte_runs(data, limit=limit)
     for encoding in ("utf-16le", "utf-16be", "gb18030", "utf-8"):
         text = data.decode(encoding, errors="ignore")
         runs = re.findall(r"[\u4e00-\u9fffA-Za-z0-9，。；：、（）《》“”\"'\-_/%.℃±=+:\s]{8,}", text)
@@ -145,6 +186,9 @@ def read_office_sample(path):
             text = xml_text(path, ["word/document.xml"], limit=MAX_SAMPLE_CHARS)
             if text.strip():
                 return text
+        converted = convert_with_libreoffice(path, "txt:Text")
+        if converted.strip():
+            return converted
         if command_exists("antiword"):
             text = run_text_command(["antiword", str(path)])
             if text.strip():
