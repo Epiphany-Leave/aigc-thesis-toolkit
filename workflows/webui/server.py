@@ -328,6 +328,7 @@ def list_downloads():
         ("thesis.docx", OUTPUT_DOCX),
         ("review_results.md", REVIEW_REPORT),
         ("quality_gate_report.md", WORK / "output" / "quality_gate_report.md"),
+        ("extraction_report.md", USER_DATA_DIR / "extraction_report.md"),
     ]
     for name, path in candidates:
         if path.exists():
@@ -437,12 +438,7 @@ def save_upload(content_type, body):
         header, _, content = part.partition(b"\r\n\r\n")
         if not content:
             continue
-        disposition = header.decode("utf-8", errors="ignore")
-        filename = ""
-        for segment in disposition.split(";"):
-            segment = segment.strip()
-            if segment.startswith("filename="):
-                filename = segment.split("=", 1)[1].strip().strip('"')
+        filename = multipart_filename(header)
         if not filename:
             skipped += 1
             continue
@@ -467,10 +463,30 @@ def save_upload(content_type, body):
     return {"saved": 0, "skipped": skipped, "message": "没有选择文件或文件夹，未导入。"}
 
 
+def multipart_filename(header):
+    """Extract only the Content-Disposition filename from a multipart part header."""
+    text = header.decode("utf-8", errors="replace")
+    disposition = ""
+    for line in text.splitlines():
+        if line.lower().startswith("content-disposition:"):
+            disposition = line
+            break
+    if not disposition:
+        return ""
+    encoded = re.search(r"filename\*=(?:UTF-8''|utf-8'')?([^;]+)", disposition)
+    if encoded:
+        return unquote(encoded.group(1).strip().strip('"'))
+    quoted = re.search(r'filename="([^"]*)"', disposition)
+    if quoted:
+        return quoted.group(1)
+    plain = re.search(r"filename=([^;]+)", disposition)
+    return plain.group(1).strip().strip('"') if plain else ""
+
+
 def safe_relative_upload_path(filename):
     parts = []
     for part in filename.replace("\\", "/").split("/"):
-        cleaned = part.strip()
+        cleaned = re.sub(r'[\x00-\x1f<>:"|?*]', "_", part).strip().strip(".")
         if not cleaned or cleaned in {".", ".."}:
             continue
         parts.append(cleaned)
@@ -983,6 +999,7 @@ class Handler(BaseHTTPRequestHandler):
             "thesis.docx": OUTPUT_DOCX,
             "review_results.md": REVIEW_REPORT,
             "quality_gate_report.md": WORK / "output" / "quality_gate_report.md",
+            "extraction_report.md": USER_DATA_DIR / "extraction_report.md",
         }
         if name == "output.zip":
             if not OUTPUT_DIR.exists():

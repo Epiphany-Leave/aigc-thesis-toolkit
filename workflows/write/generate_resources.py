@@ -27,6 +27,23 @@ IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
 BINARY_STRING_SUFFIXES = {".epro", ".schdoc", ".pcbdoc", ".prjpcb", ".json", ".xml"}
 MAX_EXTRACT_CHARS_PER_FILE = 80000
 MAX_EXTRACT_CHARS_PER_CHUNK = 16000
+EXTRACTION_REPORT = WORK / "user_data" / "extraction_report.md"
+EXTRACTION_EVENTS = {}
+
+
+def extraction_key(path):
+    try:
+        return path.resolve().as_posix()
+    except OSError:
+        return str(path)
+
+
+def log_extract(path, message):
+    EXTRACTION_EVENTS.setdefault(extraction_key(path), []).append(message)
+
+
+def extraction_notes(path):
+    return EXTRACTION_EVENTS.get(extraction_key(path), [])
 
 
 def load_config():
@@ -104,6 +121,28 @@ def run_text_command(command, timeout=60):
     return result.stdout if result.returncode == 0 else ""
 
 
+def run_text_command_detail(command, timeout=60):
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return "", "timeout"
+    except OSError as exc:
+        return "", str(exc)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        return "", detail[:600] or f"exit {result.returncode}"
+    return result.stdout, ""
+
+
 def wsl_to_windows_path(path):
     if not command_exists("wslpath"):
         return ""
@@ -113,12 +152,14 @@ def wsl_to_windows_path(path):
 def convert_doc_with_windows_word(path, limit=MAX_EXTRACT_CHARS_PER_FILE):
     powershell = shutil.which("powershell.exe")
     if not powershell:
+        log_extract(path, "Windows Word COM: powershell.exe unavailable")
         return ""
     with tempfile.TemporaryDirectory() as tmpdir:
         output_path = Path(tmpdir) / f"{path.stem}.txt"
         input_win = wsl_to_windows_path(path)
         output_win = wsl_to_windows_path(output_path)
         if not input_win or not output_win:
+            log_extract(path, "Windows Word COM: failed to map WSL path to Windows path")
             return ""
         input_win_safe = input_win.replace("'", "''")
         output_win_safe = output_win.replace("'", "''")
@@ -142,16 +183,24 @@ def convert_doc_with_windows_word(path, limit=MAX_EXTRACT_CHARS_PER_FILE):
                 errors="replace",
                 timeout=180,
             )
-        except (OSError, subprocess.TimeoutExpired):
+        except subprocess.TimeoutExpired:
+            log_extract(path, "Windows Word COM: timeout")
+            return ""
+        except OSError as exc:
+            log_extract(path, f"Windows Word COM: {exc}")
             return ""
         if result.returncode != 0 or not output_path.exists():
+            detail = (result.stderr or result.stdout or "").strip()
+            log_extract(path, f"Windows Word COM failed: {detail[:600] or 'no output'}")
             return ""
+        log_extract(path, "Windows Word COM: extracted text")
         return clean_extracted_text(output_path.read_text(encoding="utf-8", errors="ignore"), limit)
 
 
 def convert_with_libreoffice(path, target_ext, limit=MAX_EXTRACT_CHARS_PER_FILE):
     executable = shutil.which("libreoffice") or shutil.which("soffice")
     if not executable:
+        log_extract(path, "LibreOffice/soffice: not installed")
         return ""
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
@@ -165,13 +214,21 @@ def convert_with_libreoffice(path, target_ext, limit=MAX_EXTRACT_CHARS_PER_FILE)
                 errors="replace",
                 timeout=120,
             )
-        except (OSError, subprocess.TimeoutExpired):
+        except subprocess.TimeoutExpired:
+            log_extract(path, "LibreOffice: timeout")
+            return ""
+        except OSError as exc:
+            log_extract(path, f"LibreOffice: {exc}")
             return ""
         if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            log_extract(path, f"LibreOffice failed: {detail[:600] or 'no output'}")
             return ""
         converted = sorted(Path(tmpdir).glob(f"*.{target_ext.split(':', 1)[0]}"))
         if not converted:
+            log_extract(path, "LibreOffice: conversion finished but no output file was produced")
             return ""
+        log_extract(path, "LibreOffice: extracted text")
         return clean_extracted_text(converted[0].read_text(encoding="utf-8", errors="ignore"), limit)
 
 
@@ -220,6 +277,23 @@ def extract_binary_strings(path, limit=MAX_EXTRACT_CHARS_PER_FILE):
     return clean_extracted_text("\n".join(deduped), limit=limit)
 
 
+def extract_with_strings_command(path, limit=MAX_EXTRACT_CHARS_PER_FILE):
+    if not command_exists("strings"):
+        log_extract(path, "strings: not installed")
+        return ""
+    parts = []
+    for command in (["strings", "-a", "-n", "8", str(path)], ["strings", "-el", "-n", "4", str(path)]):
+        text, error = run_text_command_detail(command, timeout=60)
+        if text.strip():
+            parts.append(text)
+        elif error:
+            log_extract(path, f"{command[0]} {' '.join(command[1:4])}: {error}")
+    cleaned = clean_extracted_text("\n".join(parts), limit=limit)
+    if cleaned:
+        log_extract(path, "strings: recovered readable text fragments")
+    return cleaned
+
+
 def xml_text(path, names, limit=12000):
     parts = []
     try:
@@ -257,34 +331,57 @@ def read_doc_sample(path, limit=MAX_EXTRACT_CHARS_PER_FILE):
     if zipfile.is_zipfile(path):
         text = read_docx_sample(path, limit=limit)
         if text.strip():
+            log_extract(path, "ZIP/DOCX parser: extracted text from renamed .doc")
             return text
+        log_extract(path, "ZIP/DOCX parser: no document text found")
     converted = convert_with_libreoffice(path, "txt:Text", limit=limit)
     if converted.strip():
         return converted
     if command_exists("antiword"):
-        text = run_text_command(["antiword", str(path)])
+        text, error = run_text_command_detail(["antiword", str(path)])
         if text.strip():
+            log_extract(path, "antiword: extracted text")
             return clean_extracted_text(text, limit)
+        log_extract(path, f"antiword failed: {error or 'no text output'}")
+    else:
+        log_extract(path, "antiword: not installed")
     if command_exists("catdoc"):
-        text = run_text_command(["catdoc", "-w", str(path)])
+        text, error = run_text_command_detail(["catdoc", "-w", str(path)])
         if text.strip():
+            log_extract(path, "catdoc: extracted text")
             return clean_extracted_text(text, limit)
+        log_extract(path, f"catdoc failed: {error or 'no text output'}")
+    else:
+        log_extract(path, "catdoc: not installed")
     word_text = convert_doc_with_windows_word(path, limit=limit)
     if word_text.strip():
         return word_text
-    return extract_binary_strings(path, limit=limit)
+    strings_text = extract_with_strings_command(path, limit=limit)
+    if strings_text.strip():
+        return strings_text
+    fallback = extract_binary_strings(path, limit=limit)
+    if fallback.strip():
+        log_extract(path, "binary fallback: recovered readable text fragments")
+    else:
+        log_extract(path, "binary fallback: no readable text recovered")
+    return fallback
 
 
 def read_pdf_sample(path, limit=MAX_EXTRACT_CHARS_PER_FILE):
     if command_exists("pdftotext"):
-        text = run_text_command(["pdftotext", "-layout", "-enc", "UTF-8", str(path), "-"], timeout=90)
+        text, error = run_text_command_detail(["pdftotext", "-layout", "-enc", "UTF-8", str(path), "-"], timeout=90)
         if text.strip():
+            log_extract(path, "pdftotext: extracted text")
             return clean_extracted_text(text, limit)
+        log_extract(path, f"pdftotext failed or found no text: {error or 'no text output'}")
+    else:
+        log_extract(path, "pdftotext: not installed")
     return ""
 
 
 def read_image_ocr_sample(path, limit=MAX_EXTRACT_CHARS_PER_FILE):
     if not command_exists("tesseract"):
+        log_extract(path, "tesseract OCR: not installed")
         return ""
     with tempfile.TemporaryDirectory() as tmpdir:
         output_base = Path(tmpdir) / "ocr"
@@ -299,16 +396,23 @@ def read_image_ocr_sample(path, limit=MAX_EXTRACT_CHARS_PER_FILE):
                 errors="replace",
                 timeout=120,
             )
-        except (OSError, subprocess.TimeoutExpired):
+        except subprocess.TimeoutExpired:
+            log_extract(path, "tesseract OCR: timeout")
+            return ""
+        except OSError as exc:
+            log_extract(path, f"tesseract OCR: {exc}")
             return ""
         output_path = output_base.with_suffix(".txt")
         if result.returncode != 0 or not output_path.exists():
+            detail = (result.stderr or result.stdout or "").strip()
+            log_extract(path, f"tesseract OCR failed: {detail[:600] or 'no output'}")
             return ""
+        log_extract(path, "tesseract OCR: extracted text")
         return clean_extracted_text(output_path.read_text(encoding="utf-8", errors="ignore"), limit)
 
 
-def read_office_sample(path):
-    suffix = path.suffix.lower()
+def read_office_sample(path, suffix=None):
+    suffix = suffix or path.suffix.lower()
     if suffix == ".doc":
         return read_doc_sample(path)
     if suffix == ".docx":
@@ -316,6 +420,30 @@ def read_office_sample(path):
     if suffix == ".xlsx":
         return read_xlsx_sample(path)
     return ""
+
+
+def repaired_multipart_relative(relative):
+    if "Content-Type" not in relative:
+        return relative, False
+    candidate = relative.split("Content-Type", 1)[0]
+    candidate = re.sub(r"[\x00-\x1f\uf000-\uf8ff]+", "", candidate)
+    candidate = candidate.rstrip(' "_-:/\\')
+    return (candidate or relative), bool(candidate)
+
+
+def make_entry(path, relative, kind, size, content, readable, repaired=False):
+    notes = list(extraction_notes(path))
+    if repaired:
+        notes.insert(0, "检测到旧版 WebUI 导入产生的异常 multipart 路径；已按文件名尝试补救读取，建议用新版 WebUI 重新导入。")
+    return {
+        "path": relative,
+        "type": kind,
+        "size": size,
+        "content": content,
+        "readable": readable,
+        "notes": notes,
+        "repaired": repaired,
+    }
 
 
 def scan_user_data_entries(user_data_dir):
@@ -326,8 +454,9 @@ def scan_user_data_entries(user_data_dir):
     for path in sorted(user_data_dir.rglob("*")):
         if path.is_dir() or path.name == "resources.md":
             continue
-        relative = path.relative_to(user_data_dir).as_posix()
-        suffix = path.suffix.lower()
+        raw_relative = path.relative_to(user_data_dir).as_posix()
+        relative, repaired = repaired_multipart_relative(raw_relative)
+        suffix = Path(relative).suffix.lower() or path.suffix.lower()
         size = path.stat().st_size if path.exists() else 0
         if suffix in TEXT_SUFFIXES:
             content = read_text_content(path)
@@ -361,8 +490,46 @@ def scan_user_data_entries(user_data_dir):
     return entries
 
 
+def scan_user_data_entries_v2(user_data_dir):
+    entries = []
+    if not user_data_dir.exists():
+        return entries
+
+    for path in sorted(user_data_dir.rglob("*")):
+        if path.is_dir() or path.name in {"resources.md", "extraction_report.md"}:
+            continue
+        raw_relative = path.relative_to(user_data_dir).as_posix()
+        relative, repaired = repaired_multipart_relative(raw_relative)
+        suffix = Path(relative).suffix.lower() or path.suffix.lower()
+        size = path.stat().st_size if path.exists() else 0
+        if suffix in TEXT_SUFFIXES:
+            content = read_text_content(path)
+            entries.append(make_entry(path, relative, "文本", size, content, True, repaired))
+        elif suffix in OFFICE_TEXT_SUFFIXES:
+            sample = read_office_sample(path, suffix=suffix)
+            entries.append(make_entry(path, relative, "Office 可抽取文本" if sample.strip() else "Office 文件", size, sample if sample.strip() else "", bool(sample.strip()), repaired))
+        elif suffix in PDF_SUFFIXES:
+            sample = read_pdf_sample(path)
+            entries.append(make_entry(path, relative, "PDF 可抽取文本" if sample.strip() else "PDF 扫描件或不可抽取文本", size, sample if sample.strip() else "", bool(sample.strip()), repaired))
+        elif suffix in IMAGE_SUFFIXES:
+            sample = read_image_ocr_sample(path)
+            entries.append(make_entry(path, relative, "图片 OCR 文本" if sample.strip() else "图片文件", size, sample if sample.strip() else "", bool(sample.strip()), repaired))
+        elif suffix in BINARY_STRING_SUFFIXES:
+            sample = extract_with_strings_command(path) or extract_binary_strings(path)
+            entries.append(make_entry(path, relative, "工程/二进制可恢复字符串" if sample.strip() else "工程/二进制文件", size, sample if sample.strip() else "", bool(sample.strip()), repaired))
+        else:
+            sample = extract_with_strings_command(path)
+            entries.append(make_entry(path, relative, "未知扩展名但已恢复文本" if sample.strip() else "二进制/PDF/图片/工程文件", size, sample if sample.strip() else "", bool(sample.strip()), repaired))
+    return entries
+
+
+scan_user_data_entries = scan_user_data_entries_v2
+
+
 def scan_user_data(user_data_dir):
     entries = scan_user_data_entries(user_data_dir)
+    write_extraction_report(entries)
+    print(f"OK: wrote extraction diagnostics to {EXTRACTION_REPORT}")
 
     if not entries:
         return "user_data 目录为空。"
@@ -480,6 +647,55 @@ def ai_extract_inventory(config, entries, base, key, model, timeout):
             )
             parts.append(f"\n### 片段 {index}/{len(chunks)}\n{extracted}")
     return "\n\n".join(parts)[:220000]
+
+
+def ai_extract_inventory_v2(config, entries, base, key, model, timeout):
+    project_title = config.get("project", {}).get("title", "")
+    parts = ["# AI 资料抽取结果"]
+    for entry in entries:
+        notes = "\n".join(f"- 抽取诊断：{note}" for note in entry.get("notes", [])[-6:])
+        if not entry["readable"] or not entry["content"].strip():
+            parts.append(
+                f"## {entry['path']}\n- 类型：{entry['type']}\n- 状态：未能抽取正文，只能作为文件名和路径线索。\n{notes}"
+            )
+            continue
+        chunks = split_text(entry["content"])
+        parts.append(f"## {entry['path']}\n- 类型：{entry['type']}\n- 大小：{entry['size']} bytes\n{notes}")
+        for index, chunk in enumerate(chunks, start=1):
+            print(f"EXTRACT: {entry['path']} {index}/{len(chunks)}")
+            extracted = chat_completion(
+                base,
+                key,
+                model,
+                build_extract_messages(project_title, entry, chunk, index, len(chunks)),
+                timeout,
+            )
+            parts.append(f"\n### 片段 {index}/{len(chunks)}\n{extracted}")
+    return "\n\n".join(parts)[:220000]
+
+
+ai_extract_inventory = ai_extract_inventory_v2
+
+
+def write_extraction_report(entries):
+    lines = ["# user_data 抽取诊断报告", ""]
+    if not entries:
+        lines.append("user_data 目录为空。")
+    for entry in entries:
+        state = "成功" if entry.get("readable") and entry.get("content", "").strip() else "失败"
+        lines.append(f"## {entry['path']}")
+        lines.append(f"- 状态：{state}")
+        lines.append(f"- 类型：{entry['type']}")
+        lines.append(f"- 大小：{entry['size']} bytes")
+        if entry.get("content"):
+            lines.append(f"- 已抽取字符数：{len(entry['content'])}")
+        if entry.get("notes"):
+            for note in entry["notes"]:
+                lines.append(f"- 诊断：{note}")
+        if state == "失败":
+            lines.append("- 建议：在 WSL 安装 libreoffice/antiword/catdoc/poppler-utils/tesseract-ocr，或将该文件另存为 docx/pdf/txt 后重新导入。")
+        lines.append("")
+    EXTRACTION_REPORT.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
 
 
 def chat_completion(base, key, model, messages, timeout):
