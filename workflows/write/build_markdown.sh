@@ -6,6 +6,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
+python3 "$WORK/workflows/write/generate_references.py" --overwrite
 python3 "$WORK/workflows/write/thesis_agent.py" assemble
 
 RUN_GATE=$(python3 - "$WORK/configs/default.yaml" <<'PY'

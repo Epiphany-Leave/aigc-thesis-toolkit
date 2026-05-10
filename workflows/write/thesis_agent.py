@@ -43,6 +43,7 @@ STATE_FILE = BASE / "state.json"
 PLAN_FILE = WORK / ASSEMBLY.get("plan_file", "thesis/section_plan.json")
 THESIS_FILE = WORK / ASSEMBLY.get("output_markdown", "output/thesis.md")
 MIN_WORD_COUNT = int(ASSEMBLY.get("min_word_count", 25000) or 25000)
+REFERENCES_FILE = WORK / CONFIG.get("references", {}).get("output_markdown", "thesis/references.md")
 
 THESIS_TITLE = CONFIG.get("project", {}).get("title", "未命名论文")
 DEFAULT_SECTION_ORDER = [
@@ -243,6 +244,29 @@ def count_cjk_words(text):
     return len(cjk) + len(latin_words)
 
 
+def append_references(parts):
+    if not REFERENCES_FILE.exists():
+        return
+    content = REFERENCES_FILE.read_text(encoding="utf-8-sig", errors="ignore").strip()
+    if not content:
+        return
+    joined = "\n\n".join(parts)
+    if re.search(r"(?m)^#\s*参考文献\s*$", joined):
+        return
+    for idx, part in enumerate(parts):
+        match = re.search(r"(?m)^#\s*致谢\s*$", part)
+        if match and match.start() > 0:
+            before = part[:match.start()].strip()
+            after = part[match.start():].strip()
+            parts[idx:idx + 1] = [item for item in (before, content, after) if item]
+            return
+    ack_index = next((idx for idx, part in enumerate(parts) if re.match(r"(?m)^#\s*致谢\s*$", part.strip())), None)
+    if ack_index is None:
+        parts.append(content)
+    else:
+        parts.insert(ack_index, content)
+
+
 def cmd_assemble():
     OUTPUT_DIR.mkdir(exist_ok=True)
     parts = [f"# {THESIS_TITLE}\n"]
@@ -265,6 +289,7 @@ def cmd_assemble():
             content = normalize_chapter_markdown(content, item)
             parts.append(content)
 
+    append_references(parts)
     assembled = "\n\n".join(parts) + "\n"
     THESIS_FILE.write_text(assembled, encoding="utf-8")
     print(f"Assembled -> {THESIS_FILE}")

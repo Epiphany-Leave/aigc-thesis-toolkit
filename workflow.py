@@ -95,6 +95,13 @@ def 生成写作规范(参数):
     return 运行命令(命令)
 
 
+def 生成参考文献(参数):
+    命令 = [sys.executable, "workflows/write/generate_references.py"]
+    if 参数.overwrite:
+        命令.append("--overwrite")
+    return 运行命令(命令)
+
+
 def 生成计划(参数):
     命令 = [sys.executable, "workflows/write/plan_from_outline.py"]
     if 参数.overwrite_state:
@@ -267,6 +274,10 @@ def 主函数():
     规范 = 子命令.add_parser("style", help="扫描 user_data 并调用 OpenAI 兼容 API 生成 thesis/style.md")
     规范.add_argument("--overwrite", action="store_true", help="覆盖已有 thesis/style.md")
     规范.set_defaults(func=生成写作规范)
+
+    参考文献 = 子命令.add_parser("references", help="读取 BibTeX 或通过 Crossref 生成参考文献")
+    参考文献.add_argument("--overwrite", action="store_true", help="覆盖已有参考文献文件")
+    参考文献.set_defaults(func=生成参考文献)
 
     大纲 = 子命令.add_parser("outline", help="扫描 user_data 并调用 OpenAI 兼容 API 生成 thesis/outline.md")
     大纲.add_argument("--overwrite", action="store_true", help="覆盖已有 thesis/outline.md")

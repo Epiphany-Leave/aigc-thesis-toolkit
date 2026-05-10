@@ -485,6 +485,7 @@ def run_command(name):
         "generate": [sys.executable, "workflow.py", "generate", "--all"],
         "style": [sys.executable, "workflow.py", "style", "--overwrite"],
         "resources": [sys.executable, "workflow.py", "resources", "--overwrite"],
+        "references": [sys.executable, "workflow.py", "references", "--overwrite"],
         "outline": [sys.executable, "workflow.py", "outline", "--overwrite"],
         "plan": [sys.executable, "workflow.py", "plan", "--overwrite-state"],
         "build": [sys.executable, "workflow.py", "build"],
@@ -494,6 +495,7 @@ def run_command(name):
     messages = {
         "review": "Review 已启动：会按章节/分块串行检测，生成 review 报告和日志，完成后重新构建 thesis.docx。",
         "reset": "重置已启动：会清空 user_data、已生成章节、输出文件和日志，保留 API 配置。",
+        "references": "参考文献生成已启动：会优先读取 BibTeX，没有 BibTeX 时尝试联网检索并生成 references.bib / references.md。",
     }
     if name not in commands:
         return False, "未知命令"
@@ -624,7 +626,7 @@ def render_page(notice=""):
   </style>
 </head>
 <body>
-  <header><div class="hero"><h1>AIGC Thesis Toolkit</h1><div class="subtitle">{html.escape(data["project"])}<br>上传资料、配置模型、连续生成论文，并实时预览已写出的正文。关闭页面不会停止后台任务，使用“关闭 WebUI”或终端 Ctrl+C 结束服务。</div></div></header>
+  <header><div class="hero"><h1>AIGC Thesis Toolkit</h1><div class="subtitle">{html.escape(data["project"] if data["project"] != "你的论文题目" else "本地论文写作工作台")}<br>上传资料、配置模型、连续生成论文，并实时预览已写出的正文。关闭页面不会停止后台任务，使用“关闭 WebUI”或终端 Ctrl+C 结束服务。</div></div></header>
   <main>
     <div class="bar" title="{percent}%"><span></span></div>
     <div class="grid">
@@ -641,6 +643,7 @@ def render_page(notice=""):
       <button class="good" name="cmd" value="resume">继续</button>
       <button name="cmd" value="style">自动生成规范</button>
       <button name="cmd" value="resources">刷新资料索引</button>
+      <button name="cmd" value="references">生成参考文献</button>
       <button name="cmd" value="outline">重建大纲</button>
       <button name="cmd" value="plan">重建写作计划</button>
       <button name="cmd" value="build">构建 Word</button>
@@ -675,7 +678,7 @@ def render_page(notice=""):
           <h2>资料文件</h2>
           <form class="panel upload-zone" method="post" action="/upload" enctype="multipart/form-data" onsubmit="return hasSelectedFiles(this);">
             <h3>上传到 user_data</h3>
-            <div class="muted">建议上传与论文直接相关的资料，AI 会先生成资料索引，再据此写大纲和正文。</div>
+            <div class="muted">建议上传与论文直接相关的资料，系统会尽量抽取 DOC、DOCX、PDF、图片 OCR、BibTeX 和表格内容，再生成资料索引。</div>
             <div class="examples">
               <div class="example">开题报告、中期报告、任务书</div>
               <div class="example">参考论文、BibTeX、文献笔记</div>

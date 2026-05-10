@@ -132,6 +132,7 @@ function App() {
   const reviewProgress = status.review_progress || initialStatus.review_progress;
   const currentName = status.current?.subsection_title || status.current?.title || "无";
   const runnerOutput = status.runner?.output || [];
+  const displayProject = status.project && status.project !== "你的论文题目" ? status.project : "AIGC Thesis Toolkit";
 
   function dragHasFiles(event) {
     return Array.from(event.dataTransfer?.types || []).includes("Files");
@@ -323,7 +324,7 @@ function App() {
           <div className="brand-mark"><Sparkles size={22} /></div>
           <div>
             <h1>AIGC Thesis Toolkit</h1>
-            <p>{status.project || "本地论文工作台"}</p>
+            <p>{status.project && status.project !== "你的论文题目" ? status.project : "本地论文写作工作台"}</p>
           </div>
         </div>
 
@@ -365,7 +366,7 @@ function App() {
       <main className="main">
         <header className="topbar">
           <div>
-            <strong>{status.project || "AIGC Thesis Toolkit"}</strong>
+            <strong>{displayProject}</strong>
             <span>资料、写作、Review 与导出工作台</span>
           </div>
           <div className="topbar-actions">
@@ -387,6 +388,7 @@ function App() {
           <button onClick={() => runAction("resume")} disabled={busyAction}><Play size={17} />继续</button>
           <button onClick={() => runAction("style")} disabled={status.runner?.running || busyAction}>自动规范</button>
           <button onClick={() => runAction("resources")} disabled={status.runner?.running || busyAction}>资料索引</button>
+          <button onClick={() => runAction("references")} disabled={status.runner?.running || busyAction}>参考文献</button>
           <button onClick={() => runAction("outline")} disabled={status.runner?.running || busyAction}>重建大纲</button>
           <button onClick={() => runAction("plan")} disabled={status.runner?.running || busyAction}>写作计划</button>
           <button onClick={() => runAction("build")} disabled={status.runner?.running || busyAction}>构建 Word</button>
@@ -418,7 +420,7 @@ function App() {
                 >
                   <UploadCloud size={34} />
                   <strong>拖拽文件或文件夹到这里</strong>
-                  <span>也可以用下方按钮选择。优先上传 Markdown/TXT/CSV/DOCX/XLSX，PDF、图片和仿真源文件建议另存关键说明文本。</span>
+                  <span>也可以用下方按钮选择。支持 Markdown/TXT/CSV/DOC/DOCX/XLSX/BibTeX/PDF/图片，系统会尽量抽取文本、OCR 或恢复可读字符串。</span>
                   <div className="drop-actions">
                     <button type="button" onClick={(event) => { event.stopPropagation(); fileInputRef.current?.click(); }}>选择文件</button>
                     <button type="button" onClick={(event) => { event.stopPropagation(); folderInputRef.current?.click(); }}>选择文件夹</button>
@@ -429,9 +431,9 @@ function App() {
                   <input ref={folderInputRef} type="file" webkitdirectory="true" directory="" multiple />
                 </div>
                 <div className="examples">
-                  <span>任务书/开题报告 DOCX</span><span>学校规范 TXT/MD</span><span>参考文献 BibTeX</span><span>实验数据 CSV/XLSX</span><span>仿真结果表格</span><span>硬件参数说明 MD</span>
+                  <span>任务书/开题报告 DOC/DOCX</span><span>学校规范 TXT/MD/PDF</span><span>参考文献 BibTeX</span><span>实验数据 CSV/XLSX</span><span>仿真结果表格</span><span>硬件参数说明 MD</span>
                 </div>
-                <p className="muted">模型无法可靠读取纯图片、PDF 扫描件和工程二进制文件。请把关键参数、测试数据、实验现象、图表含义整理成文本文件一起上传。</p>
+                <p className="muted">可复制文本的 PDF、老版 DOC 和清晰图片会尝试自动抽取；扫描件、复杂原理图和工程文件仍建议配套上传参数说明、测试数据和图表含义。</p>
                 <button className="primary"><UploadCloud size={16} />上传资料</button>
               </form>
               <div className="file-summary">

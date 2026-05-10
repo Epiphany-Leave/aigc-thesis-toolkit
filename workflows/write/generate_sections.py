@@ -132,6 +132,7 @@ def build_prompt(config, section, existing_tail):
     style = read_text(thesis_dir / "style.md")
     outline = read_text(thesis_dir / "outline.md")
     resources = read_text(user_data_dir / "resources.md")
+    references = read_text(thesis_dir / "references.md")
     chapter_title = section.get("chapter_title") or section.get("title", "")
     subsection_title = section.get("subsection_title") or section.get("title", "")
     subsections = section.get("subsections") or []
@@ -176,6 +177,9 @@ def build_prompt(config, section, existing_tail):
 个人资料索引：
 {resources}
 
+可用参考文献：
+{references}
+
 前文末尾参考：
 {existing_tail}
 
@@ -204,8 +208,9 @@ def build_prompt(config, section, existing_tail):
 8. 正文不要使用 Markdown 加粗或斜体，不要输出 **加粗**、__加粗__、*斜体* 这类格式。
 9. 不要大量使用列表。确需分点时使用中文括号编号，例如“（1）……”“（2）……”，不要使用 Markdown 有序列表“1. ”，编号前不要有空格。
 10. 正文中禁止出现代码块、程序源码或 ``` 围栏。需要说明程序逻辑时改写成论文文字或伪代码描述。
-11. 总字数目标不低于 25000 字；按章生成时每章应充分展开，避免短小提纲化。
-12. 不要用代码块包裹整篇输出。
+11. 正文论述研究背景、技术方案、控制方法、测试方法等内容时，应优先使用“可用参考文献”中的编号引用，例如“相关研究表明……[1]”。不要引用不存在的编号。
+12. 总字数目标不低于 25000 字；按章生成时每章应充分展开，避免短小提纲化。
+13. 不要用代码块包裹整篇输出。
 """,
         },
     ]

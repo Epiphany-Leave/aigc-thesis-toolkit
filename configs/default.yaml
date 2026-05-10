@@ -54,6 +54,12 @@ assembly:
   section_order: auto
   plan_file: thesis/section_plan.json
 
+references:
+  output_bibtex: user_data/references.bib
+  output_markdown: thesis/references.md
+  auto_query: true
+  max_items: 12
+
 export_docx:
   input_markdown: output/thesis.md
   output_docx: output/thesis.docx

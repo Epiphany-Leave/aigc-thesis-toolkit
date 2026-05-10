@@ -172,6 +172,7 @@ thesis/style.md
 - “继续”：取消暂停标记。
 - “自动规范”：扫描资料并生成 `thesis/style.md`。
 - “资料索引”：重新扫描 `user_data/`，生成 `user_data/resources.md`。
+- “参考文献”：优先读取上传的 `.bib`，没有 BibTeX 时尝试通过 Crossref 自动检索，生成 `user_data/references.bib` 和 `thesis/references.md`。
 - “重建大纲”：根据资料和规范重新生成 `thesis/outline.md`。
 - “写作计划”：根据大纲生成 `thesis/section_plan.json`。
 - “构建 Word”：把 Markdown 合并并导出 `output/thesis.docx`。
@@ -198,10 +199,11 @@ thesis/style.md
 5. 导入资料文件或资料文件夹。
 6. 点击“自动规范”或手动编辑 `style.md`。
 7. 点击“资料索引”。这一步会对可读取资料逐文件/分块调用 AI 提取关键信息，再汇总成 `user_data/resources.md`。
-8. 点击“重建大纲”。
-9. 点击“写作计划”。
-10. 点击“继续生成”或“开始完整流程”。
-11. 生成完成后点击“构建 Word”。
+8. 点击“参考文献”。如果你已经上传 `.bib` 会优先使用；否则会联网尝试检索。
+9. 点击“重建大纲”。
+10. 点击“写作计划”。
+11. 点击“继续生成”或“开始完整流程”。
+12. 生成完成后点击“构建 Word”。
 
 如果你想测试全自动链路，可以在配置和资料准备好以后直接点击“开始完整流程”。
 
@@ -302,6 +304,7 @@ WebUI 覆盖了常用操作，但所有步骤也可以用命令行运行。
 python workflow.py init
 python workflow.py style --overwrite
 python workflow.py resources --overwrite
+python workflow.py references --overwrite
 python workflow.py outline
 python workflow.py plan
 python workflow.py generate --all
@@ -318,6 +321,7 @@ python workflow.py generate --all --max-sections 3
 python workflow.py pause                  # 当前写作单元完成后暂停
 python workflow.py resume                 # 取消暂停
 python workflow.py build --no-assemble    # 只导出已有 output/thesis.md
+python workflow.py references --overwrite # 生成 BibTeX 和参考文献章节
 python workflow.py review                 # 按章节/分块审阅论文，并重新构建 Word
 python workflow.py reset --yes            # 清空生成内容和 user_data，开始新论文
 python workflow.py ui --port 8766         # 指定 WebUI 端口
