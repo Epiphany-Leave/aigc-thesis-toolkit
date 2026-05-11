@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -14,8 +15,10 @@ from pathlib import Path
 
 
 def 运行命令(命令):
-    print("+ " + " ".join(命令))
-    return subprocess.run(命令, cwd=工程根目录, check=False).returncode
+    print("+ " + " ".join(命令), flush=True)
+    环境 = os.environ.copy()
+    环境["PYTHONUNBUFFERED"] = "1"
+    return subprocess.run(命令, cwd=工程根目录, env=环境, check=False).returncode
 
 
 def 缺失时写入(路径, 内容):

@@ -7,6 +7,7 @@ import html
 import errno
 import json
 import mimetypes
+import os
 import posixpath
 import re
 import subprocess
@@ -62,9 +63,12 @@ class Runner:
             self.started_at = time.strftime("%Y-%m-%d %H:%M:%S")
             self.finished_at = None
             self.returncode = None
+            env = os.environ.copy()
+            env["PYTHONUNBUFFERED"] = "1"
             self.process = subprocess.Popen(
                 command,
                 cwd=WORK,
+                env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -99,6 +103,14 @@ class Runner:
                 "finished_at": self.finished_at,
                 "returncode": self.returncode,
             }
+
+    def stop(self):
+        with self.lock:
+            process = self.process
+            if process is None or process.poll() is not None:
+                return False
+            process.terminate()
+            return True
 
 
 RUNNER = Runner()
@@ -869,6 +881,7 @@ class Handler(BaseHTTPRequestHandler):
                     set_pause(False)
                     notice = "已恢复生成。"
                 elif cmd == "shutdown":
+                    RUNNER.stop()
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
                     self.end_headers()
@@ -919,6 +932,7 @@ class Handler(BaseHTTPRequestHandler):
                 set_pause(False)
                 notice = "已恢复生成。"
             elif cmd == "shutdown":
+                RUNNER.stop()
                 self.send_json({"ok": True, "message": "WebUI 已关闭。"})
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
                 return

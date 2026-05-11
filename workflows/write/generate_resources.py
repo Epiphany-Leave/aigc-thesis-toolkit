@@ -41,6 +41,13 @@ SOURCE_CODE_SUFFIXES = {
     ".uvguix",
     ".dbgconf",
     ".orig",
+    ".mk",
+    ".m",
+    ".cmd",
+    ".opt",
+    ".prefs",
+    ".launch",
+    ".ccxml",
 }
 SKIP_DIR_NAMES = {
     ".git",
@@ -77,6 +84,9 @@ SKIP_FILE_SUFFIXES = {
     ".zip",
     ".rar",
     ".7z",
+    ".out",
+    ".mexw64",
+    ".slxc",
 }
 OFFICE_TEXT_SUFFIXES = {".doc", ".docx", ".xlsx"}
 PDF_SUFFIXES = {".pdf"}
@@ -85,6 +95,8 @@ BINARY_STRING_SUFFIXES = {".epro", ".schdoc", ".pcbdoc", ".prjpcb", ".json", ".x
 MAX_EXTRACT_CHARS_PER_FILE = 80000
 MAX_EXTRACT_CHARS_PER_CHUNK = 16000
 MAX_SOURCE_SUMMARY_CHARS = 6000
+MAX_IMAGE_OCR_FILES = 12
+MAX_SOURCE_SUMMARY_FILES = 60
 EXTRACTION_REPORT = WORK / "user_data" / "extraction_report.md"
 EXTRACTION_EVENTS = {}
 
@@ -595,6 +607,8 @@ def scan_user_data_entries_v2(user_data_dir):
     if not user_data_dir.exists():
         return entries
 
+    image_ocr_count = 0
+    source_summary_count = 0
     for path in sorted(user_data_dir.rglob("*")):
         if path.is_dir() or path.name in {"resources.md", "extraction_report.md"}:
             continue
@@ -605,7 +619,12 @@ def scan_user_data_entries_v2(user_data_dir):
         relative, repaired = repaired_multipart_relative(raw_relative)
         suffix = Path(relative).suffix.lower() or path.suffix.lower()
         size = path.stat().st_size if path.exists() else 0
+        print(f"SCAN: {relative}", flush=True)
         if suffix in SOURCE_CODE_SUFFIXES:
+            source_summary_count += 1
+            if source_summary_count > MAX_SOURCE_SUMMARY_FILES:
+                log_extract(path, f"skipped source summary because source limit {MAX_SOURCE_SUMMARY_FILES} was reached")
+                continue
             sample = summarize_source_file(path, relative)
             entries.append(make_entry(path, relative, "源码/工程配置摘要", size, sample, True, repaired, skip_ai=True))
         elif suffix in TEXT_SUFFIXES:
@@ -618,8 +637,13 @@ def scan_user_data_entries_v2(user_data_dir):
             sample = read_pdf_sample(path)
             entries.append(make_entry(path, relative, "PDF 可抽取文本" if sample.strip() else "PDF 扫描件或不可抽取文本", size, sample if sample.strip() else "", bool(sample.strip()), repaired))
         elif suffix in IMAGE_SUFFIXES:
-            sample = read_image_ocr_sample(path)
-            entries.append(make_entry(path, relative, "图片 OCR 文本" if sample.strip() else "图片文件", size, sample if sample.strip() else "", bool(sample.strip()), repaired))
+            image_ocr_count += 1
+            if image_ocr_count > MAX_IMAGE_OCR_FILES:
+                log_extract(path, f"skipped OCR because image limit {MAX_IMAGE_OCR_FILES} was reached")
+                entries.append(make_entry(path, relative, "图片文件", size, "", False, repaired, skip_ai=True))
+            else:
+                sample = read_image_ocr_sample(path)
+                entries.append(make_entry(path, relative, "图片 OCR 文本" if sample.strip() else "图片文件", size, sample if sample.strip() else "", bool(sample.strip()), repaired))
         elif suffix in BINARY_STRING_SUFFIXES:
             sample = extract_with_strings_command(path) or extract_binary_strings(path)
             entries.append(make_entry(path, relative, "工程/二进制可恢复字符串" if sample.strip() else "工程/二进制文件", size, sample if sample.strip() else "", bool(sample.strip()), repaired))
@@ -635,7 +659,7 @@ scan_user_data_entries = scan_user_data_entries_v2
 def scan_user_data(user_data_dir):
     entries = scan_user_data_entries(user_data_dir)
     write_extraction_report(entries)
-    print(f"OK: wrote extraction diagnostics to {EXTRACTION_REPORT}")
+    print(f"OK: wrote extraction diagnostics to {EXTRACTION_REPORT}", flush=True)
 
     if not entries:
         return "user_data 目录为空。"
@@ -743,7 +767,7 @@ def ai_extract_inventory(config, entries, base, key, model, timeout):
         chunks = split_text(entry["content"])
         parts.append(f"## {entry['path']}\n- 类型：{entry['type']}\n- 大小：{entry['size']} bytes")
         for index, chunk in enumerate(chunks, start=1):
-            print(f"EXTRACT: {entry['path']} {index}/{len(chunks)}")
+            print(f"EXTRACT: {entry['path']} {index}/{len(chunks)}", flush=True)
             extracted = chat_completion(
                 base,
                 key,
@@ -773,7 +797,7 @@ def ai_extract_inventory_v2(config, entries, base, key, model, timeout):
         chunks = split_text(entry["content"])
         parts.append(f"## {entry['path']}\n- 类型：{entry['type']}\n- 大小：{entry['size']} bytes\n{notes}")
         for index, chunk in enumerate(chunks, start=1):
-            print(f"EXTRACT: {entry['path']} {index}/{len(chunks)}")
+            print(f"EXTRACT: {entry['path']} {index}/{len(chunks)}", flush=True)
             try:
                 extracted = chat_completion(
                     base,
@@ -784,7 +808,7 @@ def ai_extract_inventory_v2(config, entries, base, key, model, timeout):
                 )
             except RuntimeError as exc:
                 extracted = f"- 抽取失败：{exc}\n- 处理方式：跳过该片段，继续扫描后续资料。"
-                print(f"WARN: skipped {entry['path']} {index}/{len(chunks)}: {exc}")
+                print(f"WARN: skipped {entry['path']} {index}/{len(chunks)}: {exc}", flush=True)
             parts.append(f"\n### 片段 {index}/{len(chunks)}\n{extracted}")
     return "\n\n".join(parts)[:220000]
 
@@ -863,7 +887,7 @@ def main():
     user_data_dir = WORK / config.get("paths", {}).get("user_data_dir", "user_data")
     output_path = user_data_dir / "resources.md"
     if output_path.exists() and not args.overwrite:
-        print(f"SKIP: exists: {output_path}. Use --overwrite to refresh.")
+        print(f"SKIP: exists: {output_path}. Use --overwrite to refresh.", flush=True)
         return 0
 
     user_data_dir.mkdir(parents=True, exist_ok=True)
@@ -881,10 +905,10 @@ def main():
             timeout,
         )
     except RuntimeError as exc:
-        print(f"WARN: final resources summary failed: {exc}")
+        print(f"WARN: final resources summary failed: {exc}", flush=True)
         content = fallback_resources(project_title, inventory, str(exc))
     output_path.write_text(content.strip() + "\n", encoding="utf-8")
-    print(f"OK: generated {output_path}")
+    print(f"OK: generated {output_path}", flush=True)
     return 0
 
 
