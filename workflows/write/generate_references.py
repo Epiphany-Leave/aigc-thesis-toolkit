@@ -140,6 +140,34 @@ def bib_from_reference_lines(refs):
     return "\n\n".join(entries)
 
 
+def title_from_reference_line(ref):
+    text = clean_text(ref)
+    quoted = re.search(r"[《\"]([^《》\"]{6,120})[》\"]", text)
+    if quoted:
+        return quoted.group(1)
+    parts = re.split(r"[.．。]", text)
+    for part in parts[1:3]:
+        candidate = clean_text(re.sub(r"\[[A-Z]\]", "", part))
+        if 6 <= len(candidate) <= 120 and not re.search(r"^\d{4}", candidate):
+            return candidate
+    return text[:140]
+
+
+def useful_reference_query(term):
+    term = clean_text(term)
+    if len(term) < 6:
+        return False
+    if re.fullmatch(r"[\(\[]?(19|20)\d{2}([-/年.]\d{1,2}){0,2}[日号]?[\)\]]?", term):
+        return False
+    if re.search(r"EB/OL|政府|规划|意见|人民政府|产业发展|进行|核心|依据|参数公式|章节|资料|文件", term, flags=re.I):
+        return False
+    if re.search(r"[\u4e00-\u9fff]", term) and not re.search(
+        r"交错|并联|BUCK|恒流|激光|电源|控制|设计|仿真|变换器|机器人|单片机|算法|检测|测量|系统", term, flags=re.I
+    ):
+        return False
+    return True
+
+
 def parse_bib_entries(bibtex):
     entries = []
     for match in re.finditer(r"@(\w+)\s*\{\s*([^,]+)\s*,(.*?)(?=\n@\w+\s*\{|\Z)", bibtex, flags=re.S):
@@ -272,6 +300,67 @@ def query_terms(config):
     return [term for term in terms if term.strip()]
 
 
+def query_terms_v2(config):
+    user_data_dir = WORK / config.get("paths", {}).get("user_data_dir", "user_data")
+    title = config.get("project", {}).get("title", "")
+    resources = read_text(user_data_dir / "resources.md")
+    source = "\n".join([title, resources])
+    terms = [title]
+    patterns = [
+        r"基于([^，。；\n]{2,30})的([^，。；\n]{2,40})",
+        r"([\u4e00-\u9fffA-Za-z0-9+-]{2,30}(?:控制|设计|仿真|电源|机器人|小车|系统|算法|检测|测量)[\u4e00-\u9fffA-Za-z0-9+-]{0,30})",
+        r"([A-Z][A-Za-z0-9+-]{1,20}\s*(?:control|converter|power supply|robot|system|algorithm|simulation))",
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, source, flags=re.I):
+            term = " ".join(clean_text(group) for group in match.groups() if clean_text(group))
+            if 4 <= len(term) <= 100:
+                terms.append(term)
+    english_map = {
+        "交错并联": "interleaved parallel",
+        "BUCK": "buck converter",
+        "恒流": "constant current",
+        "激光": "laser diode",
+        "电源": "power supply",
+        "STM32": "STM32 microcontroller",
+        "单片机": "microcontroller",
+        "小车": "robot car",
+        "温度": "temperature control",
+    }
+    translated = [value for key, value in english_map.items() if key in source]
+    if translated:
+        terms.append(" ".join(translated[:5]))
+    deduped = []
+    seen = set()
+    for term in terms:
+        term = clean_text(term).strip("：:，,。.;；")
+        key = term.lower()
+        if term and key not in seen:
+            seen.add(key)
+            deduped.append(term)
+    return deduped[:10]
+
+
+query_terms = query_terms_v2
+
+
+def crossref_query_terms(config, refs):
+    terms = []
+    for _source, ref in refs[:8]:
+        title = title_from_reference_line(ref)
+        if title and useful_reference_query(title):
+            terms.append(title)
+    terms.extend(query_terms(config))
+    deduped = []
+    seen = set()
+    for term in terms:
+        key = clean_text(term).lower()
+        if key and key not in seen and useful_reference_query(term):
+            seen.add(key)
+            deduped.append(term)
+    return deduped
+
+
 def dedupe_items(items):
     seen = set()
     result = []
@@ -324,18 +413,17 @@ def main():
     bibtex = find_uploaded_bibtex(user_data_dir)
     if not bibtex.strip():
         refs = find_references_in_user_data(user_data_dir)
-        if refs:
-            bibtex = bib_from_reference_lines(refs)
-
-    if not bibtex.strip():
         items = []
-        for term in query_terms(config):
+        for term in crossref_query_terms(config, refs):
             try:
+                print(f"CROSSREF: {term}", flush=True)
                 items.extend(crossref_items(term, args.rows, args.timeout))
             except Exception as exc:  # noqa: BLE001 - best effort reference retrieval.
                 print(f"WARN: Crossref query failed for {term!r}: {exc}")
         generated = [bib_from_crossref_item(item, idx) for idx, item in enumerate(dedupe_items(items), 1)]
         bibtex = "\n\n".join([item for item in generated if item.strip()][:args.rows])
+        if refs and len(parse_bib_entries(bibtex)) < min(6, len(refs)):
+            bibtex = (bibtex.strip() + "\n\n" + bib_from_reference_lines(refs[: max(0, args.rows - len(parse_bib_entries(bibtex)))] )).strip()
 
     if not bibtex.strip():
         bibtex = "@misc{todo_references,\n  title = {TODO: 补充与课题直接相关的真实参考文献},\n  year = {2026}\n}\n"

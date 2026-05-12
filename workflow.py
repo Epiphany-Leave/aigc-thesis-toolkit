@@ -176,7 +176,9 @@ def 重置工程(参数):
         工程根目录 / "thesis" / "section_plan.json",
         工程根目录 / "thesis" / "state.json",
         工程根目录 / "thesis" / "pause.flag",
+        工程根目录 / "thesis" / "references.md",
         工程根目录 / "user_data" / "resources.md",
+        工程根目录 / "user_data" / "references.bib",
     ]:
         路径.unlink(missing_ok=True)
 
