@@ -41,7 +41,17 @@ user_data/ 个人资料
 ```bash
 git clone https://github.com/Epiphany-Leave/aigc-thesis-toolkit.git
 cd aigc-thesis-toolkit
+```
 
+Ubuntu/WSL 用户建议先安装系统级依赖：
+
+```bash
+bash scripts/install_system_deps_ubuntu.sh
+```
+
+创建 Python 虚拟环境并安装 Python 依赖：
+
+```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -50,17 +60,11 @@ python -m pip install -r requirements.txt
 python workflow.py init
 ```
 
-安装系统级依赖。`requirements.txt` 只能安装 Python 包，不能安装 Node.js、npm、LibreOffice、OCR、PDF 抽取器等系统软件；Ubuntu/WSL 用户可以直接运行项目提供的安装脚本：
-
-```bash
-bash scripts/install_system_deps_ubuntu.sh
-```
-
-等价的手动安装命令如下：
+`requirements.txt` 只能安装 Python 包，不能安装 Node.js、npm、LibreOffice、OCR、PDF 抽取器等系统软件。上面的安装脚本等价于以下手动安装流程，并会在 Node.js 版本低于 18 时尝试安装 Node.js 20：
 
 ```bash
 sudo apt update
-sudo apt install -y nodejs npm libreoffice poppler-utils antiword catdoc tesseract-ocr tesseract-ocr-chi-sim
+sudo apt install -y ca-certificates curl gnupg libreoffice poppler-utils antiword catdoc tesseract-ocr tesseract-ocr-chi-sim
 ```
 
 其中 `nodejs/npm` 用于构建 React WebUI；`libreoffice`、`antiword/catdoc` 用于读取老版 `.doc`；`poppler-utils` 提供 `pdftotext` 抽取可复制文本的 PDF；`tesseract` 与 `tesseract-ocr-chi-sim` 用于中英文图片 OCR。没有安装这些工具时，系统仍会尽量读取 DOCX/XLSX/TXT/CSV，但资料抽取和 Word 导出能力会明显下降。
@@ -68,7 +72,7 @@ sudo apt install -y nodejs npm libreoffice poppler-utils antiword catdoc tessera
 可以随时运行依赖检查：
 
 ```bash
-python scripts/doctor.py
+python workflow.py doctor
 ```
 
 如果 `npm run build` 提示 Node.js 版本过低，请安装 Node.js 18+。部分 Ubuntu 源自带的 Node.js 可能偏旧，此时建议使用 NodeSource 或 nvm 安装新版 Node.js。
@@ -352,6 +356,7 @@ python workflow.py references --overwrite # 生成 BibTeX 和参考文献章节
 python workflow.py review                 # 按章节/分块审阅论文，并重新构建 Word
 python workflow.py reset --yes            # 清空生成内容和 user_data，开始新论文
 python workflow.py ui --port 8766         # 指定 WebUI 端口
+python workflow.py doctor                 # 检查 Python/Node/LibreOffice/OCR/Pandoc 等依赖
 ```
 
 ## 输出文件
