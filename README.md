@@ -36,7 +36,7 @@ user_data/ 个人资料
 
 ## 快速开始
 
-推荐在 WSL、Linux、macOS 或其他支持 `venv` 的 Python 环境中运行。新版 WebUI 需要 Node.js 18+ 和 npm 9+。
+推荐在 WSL、Linux、macOS 或其他支持 `venv` 的 Python 环境中运行。 WebUI 需要 Node.js 18+ 和 npm 9+。
 
 ```bash
 git clone https://github.com/Epiphany-Leave/aigc-thesis-toolkit.git
@@ -425,17 +425,6 @@ thesis/sections/
 thesis/logs/
 output/
 ```
-
-## 是否需要 Node.js/npm
-
-新版 WebUI 使用 Vite + React，需要 Node.js 和 npm。
-
-推荐版本：
-
-- Node.js 18 或更高版本
-- npm 9 或更高版本
-
-构建后的前端文件位于 `workflows/webui/frontend/dist/`，该目录默认不提交。`python workflow.py ui` 会优先服务这个构建产物；如果还没有构建产物，会回退到旧的 Python 内置页面，方便排查环境问题。
 
 ## 许可证
 
