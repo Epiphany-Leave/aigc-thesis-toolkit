@@ -195,6 +195,10 @@ def 启动界面(参数):
     return 运行命令(命令)
 
 
+def 检查依赖(_参数):
+    return 运行命令([sys.executable, "scripts/doctor.py"])
+
+
 def 暂停生成(_参数):
     暂停文件.parent.mkdir(parents=True, exist_ok=True)
     暂停文件.write_text("paused\n", encoding="utf-8")
@@ -317,6 +321,9 @@ def 主函数():
     界面 = 子命令.add_parser("ui", help="启动本地 WebUI")
     界面.add_argument("--port", type=int, default=8765, help="WebUI 端口")
     界面.set_defaults(func=启动界面)
+
+    依赖 = 子命令.add_parser("doctor", help="检查 Python、Node/npm、Pandoc、LibreOffice、OCR 等依赖")
+    依赖.set_defaults(func=检查依赖)
 
     全部 = 子命令.add_parser("all", help="初始化、生成大纲、生成章节、导出 Word")
     全部.add_argument("--max-sections", type=int, default=None, help="本次最多生成多少个小节；默认读取 YAML")

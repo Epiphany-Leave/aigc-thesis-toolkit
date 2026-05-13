@@ -20,12 +20,18 @@ PY
 }
 
 SRC="$WORK/$(read_config export_docx.input_markdown)"
-TMP="/tmp/thesis_export.md"
 DST="$WORK/$(read_config export_docx.output_docx)"
 DST_ALT="$WORK/$(read_config export_docx.fallback_docx)"
 REFERENCE_DOC="$WORK/$(read_config paths.template_docx)"
 TOC_DEPTH="$(read_config export_docx.toc_depth)"
 TOC_DEPTH="${TOC_DEPTH:-3}"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/aigc-thesis-export.XXXXXX")"
+TMP="$TMP_DIR/thesis_export.md"
+DST_TMP="$TMP_DIR/thesis_output.docx"
+cleanup() {
+    rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT
 
 if [ ! -f "$SRC" ]; then
     echo "ERROR: $SRC not found. Run: bash workflows/write/build_markdown.sh"
@@ -50,7 +56,6 @@ if [ -z "$PANDOC" ] || [ ! -f "$PANDOC" ]; then
     exit 1
 fi
 
-DST_TMP="/tmp/thesis_output.docx"
 "$PANDOC" "$TMP" \
     -f markdown \
     -t docx \
@@ -70,5 +75,3 @@ else
     SIZE=$(stat -c%s "$DST_ALT")
     echo "OK: $DST_ALT ($SIZE bytes) [original locked]"
 fi
-
-rm -f "$DST_TMP" "$TMP"

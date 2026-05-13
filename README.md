@@ -50,14 +50,28 @@ python -m pip install -r requirements.txt
 python workflow.py init
 ```
 
-可选但推荐安装系统级资料抽取工具，能显著提升 `.doc`、PDF 和图片资料的读取率：
+安装系统级依赖。`requirements.txt` 只能安装 Python 包，不能安装 Node.js、npm、LibreOffice、OCR、PDF 抽取器等系统软件；Ubuntu/WSL 用户可以直接运行项目提供的安装脚本：
+
+```bash
+bash scripts/install_system_deps_ubuntu.sh
+```
+
+等价的手动安装命令如下：
 
 ```bash
 sudo apt update
-sudo apt install -y libreoffice poppler-utils antiword catdoc tesseract-ocr tesseract-ocr-chi-sim
+sudo apt install -y nodejs npm libreoffice poppler-utils antiword catdoc tesseract-ocr tesseract-ocr-chi-sim
 ```
 
-其中 `libreoffice`、`antiword/catdoc` 用于读取老版 `.doc`，`poppler-utils` 提供 `pdftotext` 抽取可复制文本的 PDF，`tesseract` 用于图片 OCR。没有安装这些工具时，系统仍会尽量读取 DOCX/XLSX/TXT/CSV，并对 `.doc` 或部分工程文件做二进制字符串恢复，但效果会弱一些。
+其中 `nodejs/npm` 用于构建 React WebUI；`libreoffice`、`antiword/catdoc` 用于读取老版 `.doc`；`poppler-utils` 提供 `pdftotext` 抽取可复制文本的 PDF；`tesseract` 与 `tesseract-ocr-chi-sim` 用于中英文图片 OCR。没有安装这些工具时，系统仍会尽量读取 DOCX/XLSX/TXT/CSV，但资料抽取和 Word 导出能力会明显下降。
+
+可以随时运行依赖检查：
+
+```bash
+python scripts/doctor.py
+```
+
+如果 `npm run build` 提示 Node.js 版本过低，请安装 Node.js 18+。部分 Ubuntu 源自带的 Node.js 可能偏旧，此时建议使用 NodeSource 或 nvm 安装新版 Node.js。
 
 安装并构建 React WebUI：
 
@@ -309,6 +323,19 @@ python workflow.py outline
 python workflow.py plan
 python workflow.py generate --all
 python workflow.py build
+```
+
+不要用 `sudo bash workflows/export_docx/build_docx.sh` 构建 Word。构建脚本会在当前用户权限下创建临时文件和 `output/thesis.docx`，使用 `sudo` 容易留下 root 拥有的临时文件或输出文件，后续普通用户运行时就会出现 `PermissionError: /tmp/thesis_export.md` 或输出目录无法写入。请保持虚拟环境激活后运行：
+
+```bash
+python workflow.py build
+```
+
+如果曾经用 `sudo` 运行过，可以先清理旧临时文件并修正输出目录权限：
+
+```bash
+sudo rm -f /tmp/thesis_export.md /tmp/thesis_output.docx
+sudo chown -R "$USER":"$USER" output thesis
 ```
 
 常用命令：
