@@ -199,6 +199,17 @@ def 检查依赖(_参数):
     return 运行命令([sys.executable, "scripts/doctor.py"])
 
 
+def 生成PPT(参数):
+    命令 = [sys.executable, "workflows/ppt/generate_ppt.py"]
+    if 参数.input:
+        命令.extend(["--input", 参数.input])
+    if 参数.output:
+        命令.extend(["--output", 参数.output])
+    if 参数.style:
+        命令.extend(["--style", 参数.style])
+    return 运行命令(命令)
+
+
 def 暂停生成(_参数):
     暂停文件.parent.mkdir(parents=True, exist_ok=True)
     暂停文件.write_text("paused\n", encoding="utf-8")
@@ -324,6 +335,12 @@ def 主函数():
 
     依赖 = 子命令.add_parser("doctor", help="检查 Python、Node/npm、Pandoc、LibreOffice、OCR 等依赖")
     依赖.set_defaults(func=检查依赖)
+
+    PPT = 子命令.add_parser("ppt", help="根据已生成论文 Markdown 自动生成答辩 PPT")
+    PPT.add_argument("--input", help="输入 Markdown，默认 output/thesis.md")
+    PPT.add_argument("--output", help="输出 PPTX，默认 output/thesis_presentation.pptx")
+    PPT.add_argument("--style", choices=["infographic", "excalidraw", "architecture"], default="infographic", help="PPT 视觉风格预设")
+    PPT.set_defaults(func=生成PPT)
 
     全部 = 子命令.add_parser("all", help="初始化、生成大纲、生成章节、导出 Word")
     全部.add_argument("--max-sections", type=int, default=None, help="本次最多生成多少个小节；默认读取 YAML")

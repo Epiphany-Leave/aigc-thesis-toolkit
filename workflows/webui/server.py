@@ -27,6 +27,7 @@ PLAN_FILE = WORK / "thesis" / "section_plan.json"
 PAUSE_FILE = WORK / "thesis" / "pause.flag"
 OUTPUT_DOCX = WORK / "output" / "thesis.docx"
 OUTPUT_MD = WORK / "output" / "thesis.md"
+OUTPUT_PPTX = WORK / "output" / "thesis_presentation.pptx"
 OUTPUT_DIR = WORK / "output"
 REVIEW_REPORT = WORK / "output" / "review_results.md"
 OUTLINE_FILE = WORK / "thesis" / "outline.md"
@@ -136,6 +137,7 @@ def status_payload():
         "paused": PAUSE_FILE.exists(),
         "output_docx": OUTPUT_DOCX.exists(),
         "output_md": OUTPUT_MD.exists(),
+        "output_pptx": OUTPUT_PPTX.exists(),
         "review_report": REVIEW_REPORT.exists(),
         "downloads": list_downloads(),
         "runner": runner,
@@ -338,6 +340,7 @@ def list_downloads():
     candidates = [
         ("thesis.md", OUTPUT_MD),
         ("thesis.docx", OUTPUT_DOCX),
+        ("thesis_presentation.pptx", OUTPUT_PPTX),
         ("review_results.md", REVIEW_REPORT),
         ("quality_gate_report.md", WORK / "output" / "quality_gate_report.md"),
         ("extraction_report.md", USER_DATA_DIR / "extraction_report.md"),
@@ -517,6 +520,7 @@ def run_command(name):
         "outline": [sys.executable, "workflow.py", "outline", "--overwrite"],
         "plan": [sys.executable, "workflow.py", "plan", "--overwrite-state"],
         "build": [sys.executable, "workflow.py", "build"],
+        "ppt": [sys.executable, "workflow.py", "ppt"],
         "review": [sys.executable, "workflow.py", "review"],
         "reset": [sys.executable, "workflow.py", "reset", "--yes"],
     }
@@ -524,6 +528,7 @@ def run_command(name):
         "review": "Review 已启动：会按章节/分块串行检测，生成 review 报告和日志，完成后重新构建 thesis.docx。",
         "reset": "重置已启动：会清空 user_data、已生成章节、输出文件和日志，保留 API 配置。",
         "references": "参考文献生成已启动：会优先读取 BibTeX，没有 BibTeX 时尝试联网检索并生成 references.bib / references.md。",
+        "ppt": "PPT 生成已启动：会根据 output/thesis.md 生成 output/thesis_presentation.pptx。",
     }
     if name not in commands:
         return False, "未知命令"
@@ -1011,6 +1016,7 @@ class Handler(BaseHTTPRequestHandler):
         mapping = {
             "thesis.md": OUTPUT_MD,
             "thesis.docx": OUTPUT_DOCX,
+            "thesis_presentation.pptx": OUTPUT_PPTX,
             "review_results.md": REVIEW_REPORT,
             "quality_gate_report.md": WORK / "output" / "quality_gate_report.md",
             "extraction_report.md": USER_DATA_DIR / "extraction_report.md",

@@ -23,7 +23,7 @@ COMMANDS = {
     "tesseract": ["tesseract", "--version"],
 }
 
-PYTHON_MODULES = ["yaml", "pypandoc"]
+PYTHON_MODULES = ["yaml", "pypandoc", "pptx"]
 
 
 def command_status(name: str, command: list[str]) -> tuple[bool, str]:
