@@ -40,6 +40,7 @@ LOCAL_CONFIG_FILE = WORK / "configs" / "local.yaml"
 STYLE_FILE = WORK / "thesis" / "style.md"
 USER_DATA_DIR = WORK / "user_data"
 PPT_SOURCE_DIR = USER_DATA_DIR / "ppt_source"
+PPT_TEMPLATE_DIR = USER_DATA_DIR / "ppt_template"
 PHOTO_DIR = WORK / "workflows" / "webui" / "photo"
 FRONTEND_DIST = WORK / "workflows" / "webui" / "frontend" / "dist"
 PREVIEW_LIMIT = 60000
@@ -205,12 +206,14 @@ def ppt_payload(runner):
         except json.JSONDecodeError:
             plan = {}
     sources = list_ppt_sources()
+    templates = list_ppt_templates()
     return {
         "progress": parse_ppt_progress(runner.get("output", [])),
         "outline": read_text_file(PPT_OUTLINE_FILE),
         "preview": read_text_file(PPT_PREVIEW_FILE),
         "plan": plan,
         "sources": sources,
+        "templates": templates,
         "output": OUTPUT_PPTX.exists(),
     }
 
@@ -377,6 +380,16 @@ def list_ppt_sources():
     items = []
     for path in sorted(PPT_SOURCE_DIR.iterdir(), key=lambda item: item.stat().st_mtime, reverse=True):
         if path.is_file() and path.suffix.lower() in {".md", ".markdown", ".txt", ".docx", ".pdf"}:
+            items.append({"name": path.name, "path": str(path.relative_to(WORK)), "size": path.stat().st_size})
+    return items[:10]
+
+
+def list_ppt_templates():
+    if not PPT_TEMPLATE_DIR.exists():
+        return []
+    items = []
+    for path in sorted(PPT_TEMPLATE_DIR.iterdir(), key=lambda item: item.stat().st_mtime, reverse=True):
+        if path.is_file() and path.suffix.lower() in {".ppt", ".pptx"}:
             items.append({"name": path.name, "path": str(path.relative_to(WORK)), "size": path.stat().st_size})
     return items[:10]
 
@@ -563,6 +576,39 @@ def save_ppt_upload(content_type, body):
     return {"saved": len(saved), "source": latest, "message": f"已导入 {len(saved)} 个 PPT 论文源文件。"}
 
 
+def save_ppt_template_upload(content_type, body):
+    marker = "boundary="
+    if marker not in content_type:
+        return {"saved": 0, "message": "没有收到 PPT 模板文件。"}
+    boundary = content_type.split(marker, 1)[1].strip().strip('"').encode()
+    delimiter = b"--" + boundary
+    PPT_TEMPLATE_DIR.mkdir(parents=True, exist_ok=True)
+    saved = []
+    allowed = {".ppt", ".pptx"}
+    for part in body.split(delimiter):
+        if b"Content-Disposition:" not in part or b"filename=" not in part:
+            continue
+        header, _, content = part.partition(b"\r\n\r\n")
+        filename = multipart_filename(header)
+        if not filename:
+            continue
+        safe_path = safe_relative_upload_path(Path(filename).name)
+        if safe_path is None:
+            continue
+        target = PPT_TEMPLATE_DIR / safe_path.name
+        if target.suffix.lower() not in allowed:
+            continue
+        content = content.rstrip(b"\r\n")
+        if content.endswith(b"--"):
+            content = content[:-2].rstrip(b"\r\n")
+        target.write_bytes(content)
+        saved.append(target)
+    if not saved:
+        return {"saved": 0, "message": "请选择 ppt 或 pptx 模板文件。"}
+    latest = saved[-1].relative_to(WORK).as_posix()
+    return {"saved": len(saved), "template": latest, "message": f"已导入 {len(saved)} 个 PPT 模板文件。"}
+
+
 def multipart_filename(header):
     """Extract only the Content-Disposition filename from a multipart part header."""
     text = header.decode("utf-8", errors="replace")
@@ -621,7 +667,7 @@ def run_command(name):
     return ok, messages.get(name, message) if ok else message
 
 
-def run_ppt_command(style="infographic", source=""):
+def run_ppt_command(style="infographic", source="", template=""):
     style = style if style in {"infographic", "excalidraw", "architecture"} else "infographic"
     command = [sys.executable, "workflow.py", "ppt", "--style", style]
     if source:
@@ -633,11 +679,21 @@ def run_ppt_command(style="infographic", source=""):
         if not source_path.exists():
             return False, "PPT 输入文件不存在。"
         command.extend(["--input", str(source_path)])
+    if template:
+        template_path = (WORK / template).resolve()
+        try:
+            template_path.relative_to(WORK.resolve())
+        except ValueError:
+            return False, "PPT 模板文件必须位于项目目录内。"
+        if not template_path.exists():
+            return False, "PPT 模板文件不存在。"
+        command.extend(["--template", str(template_path)])
     ok, message = RUNNER.start(command)
     if not ok:
         return ok, message
     source_label = source or "output/thesis.md"
-    return True, f"PPT 工作流已启动：输入 {source_label}，风格 {style}。"
+    template_label = template or "默认模板"
+    return True, f"PPT 生成已启动：输入 {source_label}，模板 {template_label}，风格 {style}。"
 
 
 def frontend_sources_newer_than_dist():
@@ -1021,6 +1077,10 @@ class Handler(BaseHTTPRequestHandler):
             result = save_ppt_upload(self.headers.get("Content-Type", ""), raw_body)
             self.send_json({"ok": result["saved"] > 0, **result, "status": status_payload()})
             return
+        if path == "/api/ppt-template-upload":
+            result = save_ppt_template_upload(self.headers.get("Content-Type", ""), raw_body)
+            self.send_json({"ok": result["saved"] > 0, **result, "status": status_payload()})
+            return
 
         try:
             payload = json.loads(raw_body.decode("utf-8") or "{}")
@@ -1039,7 +1099,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/ppt-generate":
             style = str(payload.get("style", "infographic"))
             source = str(payload.get("source", "") or "")
-            ok, notice = run_ppt_command(style=style, source=source)
+            template = str(payload.get("template", "") or "")
+            ok, notice = run_ppt_command(style=style, source=source, template=template)
             self.send_json({"ok": ok, "message": notice, "status": status_payload()})
             return
         if path == "/api/action":

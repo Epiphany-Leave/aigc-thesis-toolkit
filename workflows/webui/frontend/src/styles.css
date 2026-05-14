@@ -276,6 +276,10 @@ label {
   align-items: start;
 }
 
+.dashboard.ppt-dashboard {
+  grid-template-columns: 1fr;
+}
+
 .left-column, .right-column {
   display: grid;
   gap: 16px;
@@ -558,7 +562,7 @@ label {
 
 .ppt-workspace {
   display: grid;
-  grid-template-columns: minmax(260px, .55fr) minmax(420px, 1fr);
+  grid-template-columns: minmax(320px, .52fr) minmax(560px, 1fr);
   gap: 14px;
 }
 
@@ -568,31 +572,13 @@ label {
   align-content: start;
 }
 
-.ppt-drop {
-  display: grid;
-  gap: 9px;
-  justify-items: center;
-  min-height: 170px;
-  padding: 18px;
-  border: 2px dashed #a9c7ff;
-  border-radius: 14px;
-  color: #4b5f8f;
-  text-align: center;
-  background: linear-gradient(135deg, rgba(246, 251, 255, .94), rgba(255, 240, 250, .88));
+.ppt-drop-zone {
+  min-height: 158px;
+  cursor: default;
 }
 
-.ppt-drop.drag-active {
-  border-color: #7b61ff;
-  box-shadow: 0 12px 30px rgba(123, 97, 255, .18);
-}
-
-.ppt-drop input {
+.ppt-drop-zone input {
   max-width: 100%;
-}
-
-.ppt-drop span {
-  color: #71819d;
-  font-size: 13px;
 }
 
 .ppt-option-grid {
@@ -619,6 +605,65 @@ label {
 .ppt-preview-grid {
   display: grid;
   gap: 12px;
+}
+
+.ppt-live-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(155, 126, 205, .24);
+  border-radius: 12px;
+  color: #4d4370;
+  background: rgba(255, 255, 255, .78);
+}
+
+.ppt-live-status span {
+  color: #7d6a99;
+  overflow-wrap: anywhere;
+}
+
+.ppt-slide-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ppt-slide-item {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 4px 10px;
+  padding: 10px;
+  border: 1px solid rgba(155, 126, 205, .22);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .72);
+}
+
+.ppt-slide-item span {
+  grid-row: 1 / 3;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  color: #fff;
+  background: #9d72ff;
+  font-weight: 800;
+}
+
+.ppt-slide-item strong,
+.ppt-slide-item small {
+  overflow-wrap: anywhere;
+}
+
+.ppt-slide-item small {
+  color: #7d6a99;
+}
+
+.ppt-slide-item.done {
+  border-color: rgba(87, 184, 123, .38);
+  background: rgba(230, 255, 239, .72);
 }
 
 .ppt-reader {
@@ -726,7 +771,7 @@ label {
   .plan-row code { grid-column: 1; }
   .command-strip button { flex: 1 1 144px; }
   .download-grid { grid-template-columns: 1fr; }
-  .ppt-workspace, .ppt-option-grid { grid-template-columns: 1fr; }
+  .ppt-workspace, .ppt-option-grid, .ppt-slide-list { grid-template-columns: 1fr; }
   .reader { min-height: 420px; padding: 16px; }
   .drawer-grid { grid-template-columns: 1fr; }
 }

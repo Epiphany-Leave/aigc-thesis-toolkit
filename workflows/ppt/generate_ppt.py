@@ -12,7 +12,9 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
+import tempfile
 import urllib.error
 import urllib.request
 import zipfile
@@ -162,6 +164,29 @@ def read_pdf(path: Path) -> str:
     except (OSError, subprocess.TimeoutExpired):
         return ""
     return clean_text(result.stdout) if result.returncode == 0 else ""
+
+
+def convert_ppt_to_pptx(path: Path) -> Path | None:
+    if path.suffix.lower() == ".pptx":
+        return path
+    if path.suffix.lower() != ".ppt" or shutil.which("libreoffice") is None:
+        return None
+    tmpdir = Path(tempfile.mkdtemp(prefix="ppt-template-"))
+    try:
+        result = subprocess.run(
+            ["libreoffice", "--headless", "--convert-to", "pptx", "--outdir", str(tmpdir), str(path)],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    converted = tmpdir / f"{path.stem}.pptx"
+    return converted if result.returncode == 0 and converted.exists() else None
 
 
 def source_markdown() -> str:
@@ -364,6 +389,28 @@ def write_artifacts(plan: dict) -> None:
     PPT_PREVIEW.write_text("\n".join(preview_lines).strip() + "\n", encoding="utf-8")
 
 
+def blank_presentation(template_path: Path | None = None) -> Presentation:
+    if template_path is None:
+        prs = Presentation()
+    else:
+        template = convert_ppt_to_pptx(template_path)
+        if template is None or not template.exists():
+            print(f"PPT WARN: template unavailable, using default theme: {template_path}")
+            prs = Presentation()
+        else:
+            try:
+                prs = Presentation(str(template))
+            except Exception as exc:  # python-pptx can raise package-specific exceptions.
+                print(f"PPT WARN: unable to read template, using default theme: {exc}")
+                prs = Presentation()
+    while len(prs.slides):
+        slide_id = prs.slides._sldIdLst[0]
+        rel_id = slide_id.rId
+        prs.part.drop_rel(rel_id)
+        prs.slides._sldIdLst.remove(slide_id)
+    return prs
+
+
 def set_background(slide, color: RGBColor) -> None:
     fill = slide.background.fill
     fill.solid()
@@ -433,10 +480,10 @@ def add_visual_placeholder(slide, label: str, theme, style: str) -> None:
             bubble.line.color.rgb = bubble.fill.fore_color.rgb
 
 
-def build_presentation(plan: dict, style: str) -> Presentation:
+def build_presentation(plan: dict, style: str, template_path: Path | None = None) -> Presentation:
     theme = THEMES.get(style, THEMES["infographic"])
     slides = normalize_slides(plan.get("slides", []))
-    prs = Presentation()
+    prs = blank_presentation(template_path)
     prs.slide_width = Inches(10)
     prs.slide_height = Inches(5.625)
     total = max(1, len(slides))
@@ -465,6 +512,7 @@ def main() -> int:
     parser.add_argument("--input", help="input thesis file: md/docx/pdf/txt. Default: output/thesis.md")
     parser.add_argument("--output", default=str(OUTPUT_PPTX), help="output pptx path")
     parser.add_argument("--style", default="infographic", choices=sorted(THEMES), help="visual style preset")
+    parser.add_argument("--template", help="optional reference PPT template: pptx or ppt")
     parser.add_argument("--no-ai", action="store_true", help="skip AI planning and use local extraction")
     args = parser.parse_args()
 
@@ -476,7 +524,8 @@ def main() -> int:
         plan = local_plan(text, args.style, source_name)
     plan["slides"] = normalize_slides(plan.get("slides", []))
     write_artifacts(plan)
-    prs = build_presentation(plan, args.style)
+    template_path = Path(args.template) if args.template else None
+    prs = build_presentation(plan, args.style, template_path=template_path)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     prs.save(output)

@@ -42,7 +42,7 @@ const initialStatus = {
   thesis_logs: [],
   latest_log: "",
   review_progress: { active: false, done: 0, total: 0, percent: 0, label: "" },
-  ppt: { progress: { active: false, done: 0, total: 0, percent: 0, label: "" }, outline: "", preview: "", plan: {}, sources: [], output: false }
+  ppt: { progress: { active: false, done: 0, total: 0, percent: 0, label: "" }, outline: "", preview: "", plan: {}, sources: [], templates: [], output: false }
 };
 
 function escapeHtml(value) {
@@ -125,14 +125,17 @@ function App() {
   const [autoPreview, setAutoPreview] = useState(true);
   const [dragActive, setDragActive] = useState(false);
   const [pptDragActive, setPptDragActive] = useState(false);
+  const [pptTemplateDragActive, setPptTemplateDragActive] = useState(false);
   const [pptStyle, setPptStyle] = useState("infographic");
   const [pptSource, setPptSource] = useState("");
+  const [pptTemplate, setPptTemplate] = useState("");
   const [configOpen, setConfigOpen] = useState(false);
   const previewRef = useRef(null);
   const fileInputRef = useRef(null);
   const folderInputRef = useRef(null);
   const styleFileRef = useRef(null);
   const pptInputRef = useRef(null);
+  const pptTemplateInputRef = useRef(null);
 
   const progress = status.total ? Math.round((status.done / status.total) * 100) : 0;
   const reviewProgress = status.review_progress || initialStatus.review_progress;
@@ -244,8 +247,8 @@ function App() {
 
   async function runPptGenerate(source = "") {
     setBusyAction("ppt");
-    const result = await postJson("/api/ppt-generate", { style: pptStyle, source });
-    setNotice(result.message || "PPT 工作流已提交。");
+    const result = await postJson("/api/ppt-generate", { style: pptStyle, source, template: pptTemplate });
+    setNotice(result.message || "PPT 生成已提交。");
     setBusyAction("");
     await refresh({ keepForms: true });
   }
@@ -279,6 +282,37 @@ function App() {
     setPptDragActive(false);
     const files = Array.from(event.dataTransfer.files || []).map((file) => ({ file, path: file.name }));
     await uploadPptEntries(files);
+  }
+
+  async function uploadPptTemplateEntries(entries) {
+    const form = new FormData();
+    for (const entry of entries) {
+      form.append("files", entry.file, entry.file.name);
+    }
+    if (!entries.length) {
+      setNotice("请先选择一个 ppt 或 pptx 模板文件。");
+      return;
+    }
+    const response = await fetch("/api/ppt-template-upload", { method: "POST", body: form });
+    const result = await response.json();
+    setNotice(result.message || "PPT 模板已导入。");
+    if (result.template) setPptTemplate(result.template);
+    if (pptTemplateInputRef.current) pptTemplateInputRef.current.value = "";
+    await refresh({ keepForms: true });
+  }
+
+  async function uploadPptTemplate(event) {
+    event.preventDefault();
+    const entries = Array.from(pptTemplateInputRef.current?.files || []).map((file) => ({ file, path: file.name }));
+    await uploadPptTemplateEntries(entries);
+  }
+
+  async function handlePptTemplateDrop(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    setPptTemplateDragActive(false);
+    const files = Array.from(event.dataTransfer.files || []).map((file) => ({ file, path: file.name }));
+    await uploadPptTemplateEntries(files);
   }
 
   async function uploadFileEntries(entries) {
@@ -405,7 +439,7 @@ function App() {
         )}
 
         <nav className="nav">
-          <button className={activeTab === "ppt" ? "active" : ""} onClick={() => setActiveTab("ppt")}><Presentation size={18} />PPT 工作流</button>
+          <button className={activeTab === "ppt" ? "active" : ""} onClick={() => setActiveTab("ppt")}><Presentation size={18} />PPT 生成</button>
           <button className={activeTab === "preview" ? "active" : ""} onClick={() => setActiveTab("preview")}><BookOpen size={18} />论文预览</button>
           <button className={activeTab === "outline" ? "active" : ""} onClick={() => setActiveTab("outline")}><ScrollText size={18} />大纲</button>
           <button className={activeTab === "plan" ? "active" : ""} onClick={() => setActiveTab("plan")}><Activity size={18} />写作计划</button>
@@ -455,8 +489,8 @@ function App() {
           <button className="danger" onClick={() => runAction("shutdown")}><Square size={15} />关闭 WebUI</button>
         </section>
 
-        <section className="dashboard">
-          <div className="left-column">
+        <section className={`dashboard ${activeTab === "ppt" ? "ppt-dashboard" : ""}`}>
+          {activeTab !== "ppt" && <div className="left-column">
             <Panel title="资料导入" icon={<FolderUp size={18} />}>
               <form
                 className="upload-layout"
@@ -515,7 +549,7 @@ function App() {
                 <button><UploadCloud size={16} />导入 style.md</button>
               </form>
             </Panel>
-          </div>
+          </div>}
 
           <div className="right-column">
             {activeTab === "preview" && (
@@ -546,11 +580,11 @@ function App() {
               </Panel>
             )}
             {activeTab === "ppt" && (
-              <Panel title="PPT 工作流" icon={<Presentation size={18} />}>
+              <Panel title="PPT 生成" icon={<Presentation size={18} />}>
                 <div className="ppt-workspace">
                   <div className="ppt-controls">
                     <form
-                      className={`ppt-drop ${pptDragActive ? "drag-active" : ""}`}
+                      className={`drop-zone ppt-drop-zone ${pptDragActive ? "drag-active" : ""}`}
                       onSubmit={uploadPptSource}
                       onDragEnter={(event) => { if (dragHasFiles(event)) { event.preventDefault(); setPptDragActive(true); } }}
                       onDragOver={(event) => { if (dragHasFiles(event)) { event.preventDefault(); setPptDragActive(true); } }}
@@ -562,6 +596,20 @@ function App() {
                       <span>支持 md、docx、pdf、txt；也可以不导入，直接使用 output/thesis.md。</span>
                       <input ref={pptInputRef} type="file" accept=".md,.markdown,.docx,.pdf,.txt" multiple />
                       <button type="submit"><UploadCloud size={16} />上传论文源</button>
+                    </form>
+                    <form
+                      className={`drop-zone ppt-drop-zone ${pptTemplateDragActive ? "drag-active" : ""}`}
+                      onSubmit={uploadPptTemplate}
+                      onDragEnter={(event) => { if (dragHasFiles(event)) { event.preventDefault(); setPptTemplateDragActive(true); } }}
+                      onDragOver={(event) => { if (dragHasFiles(event)) { event.preventDefault(); setPptTemplateDragActive(true); } }}
+                      onDragLeave={(event) => { event.preventDefault(); setPptTemplateDragActive(false); }}
+                      onDrop={handlePptTemplateDrop}
+                    >
+                      <FileArchive size={30} />
+                      <strong>导入参考 PPT 模板</strong>
+                      <span>支持 pptx；安装 LibreOffice 后可尝试 ppt。生成时会参考模板尺寸和母版风格。</span>
+                      <input ref={pptTemplateInputRef} type="file" accept=".ppt,.pptx" multiple />
+                      <button type="submit"><UploadCloud size={16} />上传模板</button>
                     </form>
                     <div className="ppt-option-grid">
                       <label>视觉预设
@@ -575,6 +623,14 @@ function App() {
                         <select value={pptSource} onChange={(event) => setPptSource(event.target.value)}>
                           <option value="">使用 output/thesis.md</option>
                           {(pptState.sources || []).map((item) => (
+                            <option key={item.path} value={item.path}>{item.name}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>参考 PPT 模板
+                        <select value={pptTemplate} onChange={(event) => setPptTemplate(event.target.value)}>
+                          <option value="">使用默认模板</option>
+                          {(pptState.templates || []).map((item) => (
                             <option key={item.path} value={item.path}>{item.name}</option>
                           ))}
                         </select>
@@ -605,9 +661,24 @@ function App() {
                     )}
                   </div>
                   <div className="ppt-preview-grid">
+                    <div className="ppt-live-status">
+                      <strong>当前生成</strong>
+                      <span>{pptProgress.label || (pptProgress.active ? "正在生成页面计划" : "等待开始")}</span>
+                    </div>
+                    <div className="ppt-slide-list">
+                      {((pptState.plan && pptState.plan.slides) || []).map((slide, index) => (
+                        <div className={`ppt-slide-item ${index < (pptProgress.done || 0) ? "done" : ""}`} key={`${slide.title}-${index}`}>
+                          <span>{index + 1}</span>
+                          <strong>{slide.title}</strong>
+                          <small>{(slide.bullets || []).slice(0, 2).join(" / ")}</small>
+                        </div>
+                      ))}
+                      {(!pptState.plan || !pptState.plan.slides || pptState.plan.slides.length === 0) && (
+                        <p className="muted">PPT 计划生成后，这里会实时显示每一页的标题和要点。</p>
+                      )}
+                    </div>
                     <article className="reader ppt-reader" dangerouslySetInnerHTML={{ __html: pptOutlineHtml }} />
                     <article className="reader ppt-reader" dangerouslySetInnerHTML={{ __html: pptPreviewHtml }} />
-                    <pre className="logs compact">{runnerOutput.length ? runnerOutput.join("\n") : "暂无 PPT 任务输出"}</pre>
                   </div>
                 </div>
               </Panel>

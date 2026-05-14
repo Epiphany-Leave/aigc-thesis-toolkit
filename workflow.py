@@ -207,6 +207,8 @@ def 生成PPT(参数):
         命令.extend(["--output", 参数.output])
     if 参数.style:
         命令.extend(["--style", 参数.style])
+    if getattr(参数, "template", None):
+        命令.extend(["--template", 参数.template])
     if getattr(参数, "no_ai", False):
         命令.append("--no-ai")
     return 运行命令(命令)
@@ -342,6 +344,7 @@ def 主函数():
     PPT.add_argument("--input", help="输入论文文件，支持 md/docx/pdf/txt，默认 output/thesis.md")
     PPT.add_argument("--output", help="输出 PPTX，默认 output/thesis_presentation.pptx")
     PPT.add_argument("--style", choices=["infographic", "excalidraw", "architecture"], default="infographic", help="PPT 视觉风格预设")
+    PPT.add_argument("--template", help="参考 PPT 模板，支持 pptx；安装 LibreOffice 后可尝试 ppt")
     PPT.add_argument("--no-ai", action="store_true", help="不调用 API，使用本地提纲生成 PPT")
     PPT.set_defaults(func=生成PPT)
 
