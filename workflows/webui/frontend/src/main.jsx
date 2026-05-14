@@ -483,7 +483,6 @@ function App() {
           <button onClick={() => runAction("outline")} disabled={status.runner?.running || busyAction}>重建大纲</button>
           <button onClick={() => runAction("plan")} disabled={status.runner?.running || busyAction}>写作计划</button>
           <button onClick={() => runAction("build")} disabled={status.runner?.running || busyAction}>构建 Word</button>
-          <button onClick={() => runAction("ppt")} disabled={status.runner?.running || busyAction}>生成 PPT</button>
           <button onClick={() => runAction("review")} disabled={status.runner?.running || busyAction}>Review 并导出</button>
           <button className="danger" onClick={() => window.confirm("确认清空 user_data、生成章节、输出文件和日志？API 配置会保留。") && runAction("reset")} disabled={status.runner?.running || busyAction}>一键重置</button>
           <button className="danger" onClick={() => runAction("shutdown")}><Square size={15} />关闭 WebUI</button>
