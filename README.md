@@ -19,7 +19,7 @@ AIGC Thesis Toolkit 是一个本地运行的 AI 论文写作工作流。
 - **可暂停、可续写**：生成进度记录在 `thesis/section_plan.json`，已经完成的章节默认不会重复生成。
 - **稳定的导出格式**：公式编号会在导出前从公式体中拆出；插图默认保留位置、题注和说明，不直接插入图片。
 - **导出 Word**：把生成的章节/小节合并成 `output/thesis.md`，再按 `template/reference.docx` 导出 `output/thesis.docx`。
-- **自动生成 PPT**：可以根据 `output/thesis.md` 自动生成答辩 PPT 初稿，支持 `infographic`、`excalidraw`、`architecture` 三种视觉预设，后续可接入更强的图解 skill。
+- **自动生成 PPT**：拥有独立的 PPT 工作流、prompt、进度和预览；可以根据 `output/thesis.md`，也可以根据外部导入的 `.md/.docx/.pdf/.txt` 论文生成答辩 PPT 初稿，支持 `infographic`、`excalidraw`、`architecture` 三种视觉预设。
 - **适合上传 GitHub**：API Key、个人资料、生成正文、日志和输出文件默认不会提交。
 
 ## 工作流程
@@ -196,7 +196,7 @@ thesis/style.md
 - “重建大纲”：根据资料和规范重新生成 `thesis/outline.md`。
 - “写作计划”：根据大纲生成 `thesis/section_plan.json`。
 - “构建 Word”：把 Markdown 合并并导出 `output/thesis.docx`。
-- “生成 PPT”：根据 `output/thesis.md` 生成 `output/thesis_presentation.pptx`。
+- “生成 PPT”：根据 `output/thesis.md` 生成 `output/thesis_presentation.pptx`；也可以进入“PPT 工作流”页面导入外部论文源后生成。
 - “Review 并导出”：按章节串行审阅论文，章节过长会自动切块，输出 `output/review_results.md` 和 `thesis/logs/review_*.md`，完成后重新构建 `output/thesis.docx`。
 - “一键重置”：清空 `user_data/`、已生成章节、输出文件、日志、大纲和计划，保留 API 配置，用于开始一篇新论文。
 - “关闭 WebUI”：关闭本地 Python 服务。
@@ -206,11 +206,32 @@ thesis/style.md
 - 实时论文预览
 - 论文大纲
 - 写作计划
+- PPT 工作流：导入外部论文源、选择视觉预设、查看 PPT 生成进度、大纲、计划预览和任务输出
 - 任务输出日志
 - 导出与日志：下载 `output.zip`、`thesis.docx`、`thesis.md`、Review 报告，并查看 `thesis/logs` 最新日志
 - 生成 PPT 后，可以在“导出与日志”下载 `thesis_presentation.pptx`。
 
-### 5. 推荐测试顺序
+### 5. PPT 工作流
+
+PPT 生成是独立工作流，不会破坏论文生成和 Review 流程。它会读取 `workflows/ppt/ppt_prompt.md`，优先使用 `configs/local.yaml` 或 WebUI 中配置的 OpenAI 兼容 API 生成高质量页面计划；没有 API Key 或 API 失败时，会自动退回到本地提纲提取模式。
+
+WebUI 中的“PPT 工作流”页面支持：
+
+- 直接使用已生成论文：`output/thesis.md`
+- 拖拽或选择外部论文源：`.md`、`.docx`、`.pdf`、`.txt`
+- 选择视觉预设：`infographic`、`excalidraw`、`architecture`
+- 查看 PPT 生成进度、PPT 大纲、每页预览、图解建议、讲稿提示和任务输出
+- 下载 `output/thesis_presentation.pptx`
+
+PPT 工作流会额外生成：
+
+```text
+output/ppt/plan.json     # PPT 页面计划
+output/ppt/outline.md    # PPT 大纲
+output/ppt/preview.md    # 每页要点、图解建议和讲稿提示
+```
+
+### 6. 推荐测试顺序
 
 第一次完整测试建议按这个顺序：
 
@@ -359,6 +380,9 @@ python workflow.py resume                 # 取消暂停
 python workflow.py build --no-assemble    # 只导出已有 output/thesis.md
 python workflow.py references --overwrite # 生成 BibTeX 和参考文献章节
 python workflow.py ppt --style architecture # 根据 output/thesis.md 生成 PPTX
+python workflow.py ppt --input paper.docx --style infographic
+python workflow.py ppt --input paper.pdf --style excalidraw
+python workflow.py ppt --no-ai              # 不调用 API，使用本地提纲模式
 python workflow.py review                 # 按章节/分块审阅论文，并重新构建 Word
 python workflow.py reset --yes            # 清空生成内容和 user_data，开始新论文
 python workflow.py ui --port 8766         # 指定 WebUI 端口

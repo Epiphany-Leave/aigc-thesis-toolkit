@@ -29,12 +29,17 @@ OUTPUT_DOCX = WORK / "output" / "thesis.docx"
 OUTPUT_MD = WORK / "output" / "thesis.md"
 OUTPUT_PPTX = WORK / "output" / "thesis_presentation.pptx"
 OUTPUT_DIR = WORK / "output"
+PPT_DIR = WORK / "output" / "ppt"
+PPT_PLAN_FILE = PPT_DIR / "plan.json"
+PPT_OUTLINE_FILE = PPT_DIR / "outline.md"
+PPT_PREVIEW_FILE = PPT_DIR / "preview.md"
 REVIEW_REPORT = WORK / "output" / "review_results.md"
 OUTLINE_FILE = WORK / "thesis" / "outline.md"
 CONFIG_FILE = WORK / "configs" / "default.yaml"
 LOCAL_CONFIG_FILE = WORK / "configs" / "local.yaml"
 STYLE_FILE = WORK / "thesis" / "style.md"
 USER_DATA_DIR = WORK / "user_data"
+PPT_SOURCE_DIR = USER_DATA_DIR / "ppt_source"
 PHOTO_DIR = WORK / "workflows" / "webui" / "photo"
 FRONTEND_DIST = WORK / "workflows" / "webui" / "frontend" / "dist"
 PREVIEW_LIMIT = 60000
@@ -142,6 +147,7 @@ def status_payload():
         "downloads": list_downloads(),
         "runner": runner,
         "review_progress": parse_review_progress(runner.get("output", [])),
+        "ppt": ppt_payload(runner),
         "config": load_settings(),
         "style": STYLE_FILE.read_text(encoding="utf-8") if STYLE_FILE.exists() else "",
         "user_files": list_user_files(),
@@ -171,6 +177,42 @@ def parse_review_progress(output):
     if progress["total"]:
         progress["percent"] = min(100, round(progress["done"] / progress["total"] * 100))
     return progress
+
+
+def parse_ppt_progress(output):
+    progress = {"active": False, "done": 0, "total": 0, "percent": 0, "label": ""}
+    for line in output:
+        total_match = re.search(r"PPT TOTAL:\s*(\d+)", line)
+        if total_match:
+            progress["active"] = True
+            progress["total"] = int(total_match.group(1))
+        progress_match = re.search(r"PPT PROGRESS:\s*(\d+)/(\d+)\s*(.*)", line)
+        if progress_match:
+            progress["active"] = True
+            progress["done"] = int(progress_match.group(1))
+            progress["total"] = int(progress_match.group(2))
+            progress["label"] = progress_match.group(3).strip()
+    if progress["total"]:
+        progress["percent"] = min(100, round(progress["done"] / progress["total"] * 100))
+    return progress
+
+
+def ppt_payload(runner):
+    plan = {}
+    if PPT_PLAN_FILE.exists():
+        try:
+            plan = json.loads(PPT_PLAN_FILE.read_text(encoding="utf-8-sig"))
+        except json.JSONDecodeError:
+            plan = {}
+    sources = list_ppt_sources()
+    return {
+        "progress": parse_ppt_progress(runner.get("output", [])),
+        "outline": read_text_file(PPT_OUTLINE_FILE),
+        "preview": read_text_file(PPT_PREVIEW_FILE),
+        "plan": plan,
+        "sources": sources,
+        "output": OUTPUT_PPTX.exists(),
+    }
 
 
 def read_project_title():
@@ -329,6 +371,16 @@ def list_user_files():
     }
 
 
+def list_ppt_sources():
+    if not PPT_SOURCE_DIR.exists():
+        return []
+    items = []
+    for path in sorted(PPT_SOURCE_DIR.iterdir(), key=lambda item: item.stat().st_mtime, reverse=True):
+        if path.is_file() and path.suffix.lower() in {".md", ".markdown", ".txt", ".docx", ".pdf"}:
+            items.append({"name": path.name, "path": str(path.relative_to(WORK)), "size": path.stat().st_size})
+    return items[:10]
+
+
 def read_text_file(path):
     if not path.exists():
         return ""
@@ -478,6 +530,39 @@ def save_upload(content_type, body):
     return {"saved": 0, "skipped": skipped, "message": "没有选择文件或文件夹，未导入。"}
 
 
+def save_ppt_upload(content_type, body):
+    marker = "boundary="
+    if marker not in content_type:
+        return {"saved": 0, "message": "没有收到 PPT 论文源文件。"}
+    boundary = content_type.split(marker, 1)[1].strip().strip('"').encode()
+    delimiter = b"--" + boundary
+    PPT_SOURCE_DIR.mkdir(parents=True, exist_ok=True)
+    saved = []
+    allowed = {".md", ".markdown", ".txt", ".docx", ".pdf"}
+    for part in body.split(delimiter):
+        if b"Content-Disposition:" not in part or b"filename=" not in part:
+            continue
+        header, _, content = part.partition(b"\r\n\r\n")
+        filename = multipart_filename(header)
+        if not filename:
+            continue
+        safe_path = safe_relative_upload_path(Path(filename).name)
+        if safe_path is None:
+            continue
+        target = PPT_SOURCE_DIR / safe_path.name
+        if target.suffix.lower() not in allowed:
+            continue
+        content = content.rstrip(b"\r\n")
+        if content.endswith(b"--"):
+            content = content[:-2].rstrip(b"\r\n")
+        target.write_bytes(content)
+        saved.append(target)
+    if not saved:
+        return {"saved": 0, "message": "请选择 md、docx、pdf 或 txt 论文文件。"}
+    latest = saved[-1].relative_to(WORK).as_posix()
+    return {"saved": len(saved), "source": latest, "message": f"已导入 {len(saved)} 个 PPT 论文源文件。"}
+
+
 def multipart_filename(header):
     """Extract only the Content-Disposition filename from a multipart part header."""
     text = header.decode("utf-8", errors="replace")
@@ -534,6 +619,25 @@ def run_command(name):
         return False, "未知命令"
     ok, message = RUNNER.start(commands[name])
     return ok, messages.get(name, message) if ok else message
+
+
+def run_ppt_command(style="infographic", source=""):
+    style = style if style in {"infographic", "excalidraw", "architecture"} else "infographic"
+    command = [sys.executable, "workflow.py", "ppt", "--style", style]
+    if source:
+        source_path = (WORK / source).resolve()
+        try:
+            source_path.relative_to(WORK.resolve())
+        except ValueError:
+            return False, "PPT 输入文件必须位于项目目录内。"
+        if not source_path.exists():
+            return False, "PPT 输入文件不存在。"
+        command.extend(["--input", str(source_path)])
+    ok, message = RUNNER.start(command)
+    if not ok:
+        return ok, message
+    source_label = source or "output/thesis.md"
+    return True, f"PPT 工作流已启动：输入 {source_label}，风格 {style}。"
 
 
 def frontend_sources_newer_than_dist():
@@ -913,6 +1017,10 @@ class Handler(BaseHTTPRequestHandler):
             result = save_style_upload(self.headers.get("Content-Type", ""), raw_body)
             self.send_json({"ok": result["saved"], **result})
             return
+        if path == "/api/ppt-upload":
+            result = save_ppt_upload(self.headers.get("Content-Type", ""), raw_body)
+            self.send_json({"ok": result["saved"] > 0, **result, "status": status_payload()})
+            return
 
         try:
             payload = json.loads(raw_body.decode("utf-8") or "{}")
@@ -927,6 +1035,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/style":
             update_style_text(str(payload.get("style", "")))
             self.send_json({"ok": True, "message": "写作规范已保存。", "status": status_payload()})
+            return
+        if path == "/api/ppt-generate":
+            style = str(payload.get("style", "infographic"))
+            source = str(payload.get("source", "") or "")
+            ok, notice = run_ppt_command(style=style, source=source)
+            self.send_json({"ok": ok, "message": notice, "status": status_payload()})
             return
         if path == "/api/action":
             cmd = str(payload.get("cmd", ""))

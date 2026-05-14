@@ -556,6 +556,76 @@ label {
   overflow-wrap: anywhere;
 }
 
+.ppt-workspace {
+  display: grid;
+  grid-template-columns: minmax(260px, .55fr) minmax(420px, 1fr);
+  gap: 14px;
+}
+
+.ppt-controls {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.ppt-drop {
+  display: grid;
+  gap: 9px;
+  justify-items: center;
+  min-height: 170px;
+  padding: 18px;
+  border: 2px dashed #a9c7ff;
+  border-radius: 14px;
+  color: #4b5f8f;
+  text-align: center;
+  background: linear-gradient(135deg, rgba(246, 251, 255, .94), rgba(255, 240, 250, .88));
+}
+
+.ppt-drop.drag-active {
+  border-color: #7b61ff;
+  box-shadow: 0 12px 30px rgba(123, 97, 255, .18);
+}
+
+.ppt-drop input {
+  max-width: 100%;
+}
+
+.ppt-drop span {
+  color: #71819d;
+  font-size: 13px;
+}
+
+.ppt-option-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ppt-progress-card {
+  margin: 0;
+  color: #4b3f6d;
+  background: linear-gradient(135deg, rgba(255, 255, 255, .86), rgba(238, 249, 255, .82));
+}
+
+.ppt-progress-card .progress-top,
+.ppt-progress-card .progress-meta {
+  color: #5b5871;
+}
+
+.ppt-progress-card .progress-bar {
+  background: rgba(123, 97, 255, .14);
+}
+
+.ppt-preview-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.ppt-reader {
+  min-height: 280px;
+  max-height: 360px;
+}
+
 .muted { color: #826f9f; }
 
 .drawer-backdrop {
@@ -656,6 +726,7 @@ label {
   .plan-row code { grid-column: 1; }
   .command-strip button { flex: 1 1 144px; }
   .download-grid { grid-template-columns: 1fr; }
+  .ppt-workspace, .ppt-option-grid { grid-template-columns: 1fr; }
   .reader { min-height: 420px; padding: 16px; }
   .drawer-grid { grid-template-columns: 1fr; }
 }

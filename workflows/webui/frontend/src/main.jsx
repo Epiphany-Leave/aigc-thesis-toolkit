@@ -10,6 +10,7 @@ import {
   Download,
   Pause,
   Play,
+  Presentation,
   RefreshCcw,
   Save,
   ScrollText,
@@ -40,7 +41,8 @@ const initialStatus = {
   outline: "",
   thesis_logs: [],
   latest_log: "",
-  review_progress: { active: false, done: 0, total: 0, percent: 0, label: "" }
+  review_progress: { active: false, done: 0, total: 0, percent: 0, label: "" },
+  ppt: { progress: { active: false, done: 0, total: 0, percent: 0, label: "" }, outline: "", preview: "", plan: {}, sources: [], output: false }
 };
 
 function escapeHtml(value) {
@@ -122,14 +124,20 @@ function App() {
   const [activeTab, setActiveTab] = useState("preview");
   const [autoPreview, setAutoPreview] = useState(true);
   const [dragActive, setDragActive] = useState(false);
+  const [pptDragActive, setPptDragActive] = useState(false);
+  const [pptStyle, setPptStyle] = useState("infographic");
+  const [pptSource, setPptSource] = useState("");
   const [configOpen, setConfigOpen] = useState(false);
   const previewRef = useRef(null);
   const fileInputRef = useRef(null);
   const folderInputRef = useRef(null);
   const styleFileRef = useRef(null);
+  const pptInputRef = useRef(null);
 
   const progress = status.total ? Math.round((status.done / status.total) * 100) : 0;
   const reviewProgress = status.review_progress || initialStatus.review_progress;
+  const pptState = status.ppt || initialStatus.ppt;
+  const pptProgress = pptState.progress || initialStatus.ppt.progress;
   const currentName = status.current?.subsection_title || status.current?.title || "无";
   const runnerOutput = status.runner?.output || [];
   const displayProject = status.project && status.project !== "你的论文题目" ? status.project : "AIGC Thesis Toolkit";
@@ -200,6 +208,15 @@ function App() {
     [status.outline]
   );
 
+  const pptOutlineHtml = useMemo(
+    () => renderMarkdown(pptState.outline, "暂无 PPT 大纲。导入论文源或使用已生成论文后，点击生成 PPT。"),
+    [pptState.outline]
+  );
+  const pptPreviewHtml = useMemo(
+    () => renderMarkdown(pptState.preview, "暂无 PPT 预览。生成后会显示每页要点、图解建议和讲稿提示。"),
+    [pptState.preview]
+  );
+
   function updateSetting(name, value) {
     setSettings((current) => ({ ...current, [name]: value }));
   }
@@ -223,6 +240,45 @@ function App() {
     setNotice(result.message || "操作已提交。");
     setBusyAction("");
     await refresh({ keepForms: true });
+  }
+
+  async function runPptGenerate(source = "") {
+    setBusyAction("ppt");
+    const result = await postJson("/api/ppt-generate", { style: pptStyle, source });
+    setNotice(result.message || "PPT 工作流已提交。");
+    setBusyAction("");
+    await refresh({ keepForms: true });
+  }
+
+  async function uploadPptEntries(entries) {
+    const form = new FormData();
+    for (const entry of entries) {
+      form.append("files", entry.file, entry.file.name);
+    }
+    if (!entries.length) {
+      setNotice("请先选择一个 md、docx、pdf 或 txt 论文文件。");
+      return;
+    }
+    const response = await fetch("/api/ppt-upload", { method: "POST", body: form });
+    const result = await response.json();
+    setNotice(result.message || "PPT 论文源已导入。");
+    if (result.source) setPptSource(result.source);
+    if (pptInputRef.current) pptInputRef.current.value = "";
+    await refresh({ keepForms: true });
+  }
+
+  async function uploadPptSource(event) {
+    event.preventDefault();
+    const entries = Array.from(pptInputRef.current?.files || []).map((file) => ({ file, path: file.name }));
+    await uploadPptEntries(entries);
+  }
+
+  async function handlePptDrop(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    setPptDragActive(false);
+    const files = Array.from(event.dataTransfer.files || []).map((file) => ({ file, path: file.name }));
+    await uploadPptEntries(files);
   }
 
   async function uploadFileEntries(entries) {
@@ -349,6 +405,7 @@ function App() {
         )}
 
         <nav className="nav">
+          <button className={activeTab === "ppt" ? "active" : ""} onClick={() => setActiveTab("ppt")}><Presentation size={18} />PPT 工作流</button>
           <button className={activeTab === "preview" ? "active" : ""} onClick={() => setActiveTab("preview")}><BookOpen size={18} />论文预览</button>
           <button className={activeTab === "outline" ? "active" : ""} onClick={() => setActiveTab("outline")}><ScrollText size={18} />大纲</button>
           <button className={activeTab === "plan" ? "active" : ""} onClick={() => setActiveTab("plan")}><Activity size={18} />写作计划</button>
@@ -485,6 +542,73 @@ function App() {
                     </div>
                   ))}
                   {(!status.sections || status.sections.length === 0) && <p className="muted">尚未生成写作计划。</p>}
+                </div>
+              </Panel>
+            )}
+            {activeTab === "ppt" && (
+              <Panel title="PPT 工作流" icon={<Presentation size={18} />}>
+                <div className="ppt-workspace">
+                  <div className="ppt-controls">
+                    <form
+                      className={`ppt-drop ${pptDragActive ? "drag-active" : ""}`}
+                      onSubmit={uploadPptSource}
+                      onDragEnter={(event) => { if (dragHasFiles(event)) { event.preventDefault(); setPptDragActive(true); } }}
+                      onDragOver={(event) => { if (dragHasFiles(event)) { event.preventDefault(); setPptDragActive(true); } }}
+                      onDragLeave={(event) => { event.preventDefault(); setPptDragActive(false); }}
+                      onDrop={handlePptDrop}
+                    >
+                      <UploadCloud size={30} />
+                      <strong>导入外部论文源</strong>
+                      <span>支持 md、docx、pdf、txt；也可以不导入，直接使用 output/thesis.md。</span>
+                      <input ref={pptInputRef} type="file" accept=".md,.markdown,.docx,.pdf,.txt" multiple />
+                      <button type="submit"><UploadCloud size={16} />上传论文源</button>
+                    </form>
+                    <div className="ppt-option-grid">
+                      <label>视觉预设
+                        <select value={pptStyle} onChange={(event) => setPptStyle(event.target.value)}>
+                          <option value="infographic">Infographic 信息图</option>
+                          <option value="excalidraw">Excalidraw 手绘图解</option>
+                          <option value="architecture">Architecture 架构图</option>
+                        </select>
+                      </label>
+                      <label>已导入论文源
+                        <select value={pptSource} onChange={(event) => setPptSource(event.target.value)}>
+                          <option value="">使用 output/thesis.md</option>
+                          {(pptState.sources || []).map((item) => (
+                            <option key={item.path} value={item.path}>{item.name}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    <div className="split-actions">
+                      <button className="primary" onClick={() => runPptGenerate(pptSource)} disabled={status.runner?.running || busyAction} type="button">
+                        <Presentation size={16} />生成 PPT
+                      </button>
+                      <button onClick={() => runPptGenerate("")} disabled={status.runner?.running || busyAction} type="button">
+                        使用已生成论文
+                      </button>
+                    </div>
+                    <div className="progress-card ppt-progress-card">
+                      <div className="progress-top">
+                        <span>PPT 生成进度</span>
+                        <strong>{pptProgress.percent || 0}%</strong>
+                      </div>
+                      <div className="progress-bar"><span style={{ width: `${pptProgress.percent || 0}%` }} /></div>
+                      <div className="progress-meta">{pptProgress.done || 0}/{pptProgress.total || 0} 页 {pptProgress.label || ""}</div>
+                    </div>
+                    {pptState.output && (
+                      <a className="download-card" href="/download/thesis_presentation.pptx">
+                        <Download size={18} />
+                        <strong>thesis_presentation.pptx</strong>
+                        <span>下载答辩 PPT</span>
+                      </a>
+                    )}
+                  </div>
+                  <div className="ppt-preview-grid">
+                    <article className="reader ppt-reader" dangerouslySetInnerHTML={{ __html: pptOutlineHtml }} />
+                    <article className="reader ppt-reader" dangerouslySetInnerHTML={{ __html: pptPreviewHtml }} />
+                    <pre className="logs compact">{runnerOutput.length ? runnerOutput.join("\n") : "暂无 PPT 任务输出"}</pre>
+                  </div>
                 </div>
               </Panel>
             )}

@@ -207,6 +207,8 @@ def 生成PPT(参数):
         命令.extend(["--output", 参数.output])
     if 参数.style:
         命令.extend(["--style", 参数.style])
+    if getattr(参数, "no_ai", False):
+        命令.append("--no-ai")
     return 运行命令(命令)
 
 
@@ -337,9 +339,10 @@ def 主函数():
     依赖.set_defaults(func=检查依赖)
 
     PPT = 子命令.add_parser("ppt", help="根据已生成论文 Markdown 自动生成答辩 PPT")
-    PPT.add_argument("--input", help="输入 Markdown，默认 output/thesis.md")
+    PPT.add_argument("--input", help="输入论文文件，支持 md/docx/pdf/txt，默认 output/thesis.md")
     PPT.add_argument("--output", help="输出 PPTX，默认 output/thesis_presentation.pptx")
     PPT.add_argument("--style", choices=["infographic", "excalidraw", "architecture"], default="infographic", help="PPT 视觉风格预设")
+    PPT.add_argument("--no-ai", action="store_true", help="不调用 API，使用本地提纲生成 PPT")
     PPT.set_defaults(func=生成PPT)
 
     全部 = 子命令.add_parser("all", help="初始化、生成大纲、生成章节、导出 Word")
