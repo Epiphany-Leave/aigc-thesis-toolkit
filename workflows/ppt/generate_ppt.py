@@ -28,6 +28,7 @@ import yaml
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
+from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Pt
 
@@ -43,6 +44,7 @@ PPT_PLAN = PPT_DIR / "plan.json"
 PPT_OUTLINE = PPT_DIR / "outline.md"
 PPT_PREVIEW = PPT_DIR / "preview.md"
 PPT_VISUAL_DIR = PPT_DIR / "visuals"
+PPT_REFERENCE_STYLE = PPT_DIR / "reference_style.json"
 PROMPT_FILE = WORK / "workflows" / "ppt" / "ppt_prompt.md"
 MAX_SOURCE_CHARS = 90000
 MAX_SLIDES = 16
@@ -51,6 +53,7 @@ MAX_SLIDES = 16
 THEMES = {
     "infographic": {
         "bg": RGBColor(248, 250, 252),
+        "bg2": RGBColor(241, 245, 249),
         "panel": RGBColor(255, 255, 255),
         "panel2": RGBColor(235, 247, 255),
         "accent": RGBColor(25, 118, 210),
@@ -61,6 +64,7 @@ THEMES = {
     },
     "excalidraw": {
         "bg": RGBColor(255, 252, 242),
+        "bg2": RGBColor(249, 244, 232),
         "panel": RGBColor(255, 255, 255),
         "panel2": RGBColor(255, 244, 220),
         "accent": RGBColor(48, 90, 176),
@@ -71,6 +75,7 @@ THEMES = {
     },
     "architecture": {
         "bg": RGBColor(245, 247, 250),
+        "bg2": RGBColor(235, 241, 247),
         "panel": RGBColor(255, 255, 255),
         "panel2": RGBColor(232, 241, 248),
         "accent": RGBColor(47, 72, 88),
@@ -90,6 +95,11 @@ def clean_text(text: str) -> str:
     text = re.sub(r"[ \t]{2,}", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+def compact_text(text: str, limit: int) -> str:
+    text = clean_text(str(text))
+    return text if len(text) <= limit else text[: max(0, limit - 3)].rstrip(",.; ") + "..."
 
 
 def deep_merge(base, override):
@@ -221,6 +231,126 @@ def convert_ppt_to_pptx(path: Path) -> Path | None:
     return converted if result.returncode == 0 and converted.exists() else None
 
 
+def shape_rgb(shape) -> str | None:
+    try:
+        fill = shape.fill
+        if not fill or not fill.fore_color:
+            return None
+        color = fill.fore_color.rgb
+        return rgb_to_hex(color) if color else None
+    except Exception:
+        return None
+
+
+def percentile(values: list[float], ratio: float, fallback: float) -> float:
+    if not values:
+        return fallback
+    values = sorted(values)
+    index = min(len(values) - 1, max(0, round((len(values) - 1) * ratio)))
+    return values[index]
+
+
+def median(values: list[float], fallback: float) -> float:
+    return percentile(values, 0.5, fallback)
+
+
+def analyze_ppt_reference(path: Path) -> dict | None:
+    converted = convert_ppt_to_pptx(path)
+    if converted is None or not converted.exists():
+        return None
+    try:
+        prs = Presentation(str(converted))
+    except Exception as exc:
+        print(f"PPT WARN: unable to analyze reference PPT: {path} {exc}")
+        return None
+    width = float(prs.slide_width or Inches(10))
+    height = float(prs.slide_height or Inches(5.625))
+    text_boxes: list[dict] = []
+    media_boxes: list[dict] = []
+    colors: list[str] = []
+    layout_names: dict[str, int] = {}
+    slide_count = len(prs.slides)
+    for slide in prs.slides:
+        layout_name = getattr(slide.slide_layout, "name", "") or "unknown"
+        layout_names[layout_name] = layout_names.get(layout_name, 0) + 1
+        for shape in slide.shapes:
+            left = float(shape.left or 0) / width * 10
+            top = float(shape.top or 0) / height * 5.625
+            box_width = float(shape.width or 0) / width * 10
+            box_height = float(shape.height or 0) / height * 5.625
+            box = {"x": round(left, 3), "y": round(top, 3), "w": round(box_width, 3), "h": round(box_height, 3)}
+            color = shape_rgb(shape)
+            if color:
+                colors.append(color)
+            if getattr(shape, "has_text_frame", False):
+                # Only geometry is stored; text content is intentionally ignored.
+                text_boxes.append(box)
+            elif shape.shape_type == MSO_SHAPE_TYPE.PICTURE or shape.shape_type == MSO_SHAPE_TYPE.PLACEHOLDER:
+                media_boxes.append(box)
+    text_lefts = [item["x"] for item in text_boxes if item["w"] > 0.25 and item["h"] > 0.12]
+    text_tops = [item["y"] for item in text_boxes if item["w"] > 0.25 and item["h"] > 0.12]
+    media_lefts = [item["x"] for item in media_boxes if item["w"] > 0.4 and item["h"] > 0.4]
+    palette = []
+    for color in colors:
+        if color.lower() in {"#ffffff", "#000000"}:
+            continue
+        if color not in palette:
+            palette.append(color)
+        if len(palette) >= 6:
+            break
+    return {
+        "source": str(path),
+        "slides": slide_count,
+        "slide_size": {"width": round(width, 2), "height": round(height, 2)},
+        "layouts": layout_names,
+        "text_box_count": len(text_boxes),
+        "media_box_count": len(media_boxes),
+        "text_anchor": {"x": round(median(text_lefts, 0.75), 3), "y": round(percentile(text_tops, 0.25, 1.35), 3)},
+        "media_anchor": {"x": round(median(media_lefts, 6.35), 3)},
+        "palette": palette,
+    }
+
+
+def analyze_ppt_references(paths: list[Path]) -> dict:
+    profiles = [profile for path in paths if (profile := analyze_ppt_reference(path))]
+    palettes = []
+    for profile in profiles:
+        for color in profile.get("palette", []):
+            if color not in palettes:
+                palettes.append(color)
+    media_x = median([profile.get("media_anchor", {}).get("x", 6.35) for profile in profiles], 6.35)
+    text_x = median([profile.get("text_anchor", {}).get("x", 0.75) for profile in profiles], 0.75)
+    visual_side = "left" if media_x < text_x else "right"
+    summary = {
+        "sources": [profile["source"] for profile in profiles],
+        "count": len(profiles),
+        "palette": palettes[:6],
+        "visual_side": visual_side,
+        "text_anchor_x": round(text_x, 3),
+        "media_anchor_x": round(media_x, 3),
+        "profiles": profiles,
+        "privacy": "Only layout geometry, master/layout names, shape categories and colors are stored. Text and image content are ignored.",
+    }
+    PPT_DIR.mkdir(parents=True, exist_ok=True)
+    PPT_REFERENCE_STYLE.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    return summary
+
+
+def apply_reference_style(theme: dict, reference_style: dict | None) -> dict:
+    if not reference_style:
+        return dict(theme)
+    updated = dict(theme)
+    palette = reference_style.get("palette") or []
+    palette = [color for color in palette if usable_reference_accent(color)]
+    if len(palette) >= 1:
+        updated["accent"] = hex_to_rgb(palette[0], theme["accent"])
+    if len(palette) >= 2:
+        updated["accent2"] = hex_to_rgb(palette[1], theme["accent2"])
+    if len(palette) >= 3:
+        updated["accent3"] = hex_to_rgb(palette[2], theme["accent3"])
+    return updated
+
+
 def source_markdown() -> str:
     if OUTPUT_MD.exists():
         return OUTPUT_MD.read_text(encoding="utf-8-sig", errors="ignore")
@@ -255,7 +385,7 @@ def read_source(path: Path | None) -> tuple[str, str]:
 
 def skip_heading(text: str) -> bool:
     compact = re.sub(r"\s+", "", text).lower()
-    return bool(re.search(r"摘要|目录|参考文献|致谢|abstract|acknowledg", compact))
+    return bool(re.search(r"abstract|acknowledg|references|contents", compact))
 
 
 def parse_headings(text: str) -> tuple[str, list[dict]]:
@@ -267,7 +397,7 @@ def parse_headings(text: str) -> tuple[str, list[dict]]:
         if not line:
             continue
         heading = re.match(r"^(#{1,3})\s+(.+)$", line)
-        chinese_heading = re.match(r"^第[一二三四五六七八九十\d]+章\s+(.+)$", line)
+        chinese_heading = re.match(r"^Chapter\s+\d+\s+(.+)$", line, re.IGNORECASE)
         if heading or chinese_heading:
             heading_text = clean_text(heading.group(2) if heading else line)
             if not title and not skip_heading(heading_text):
@@ -283,19 +413,19 @@ def parse_headings(text: str) -> tuple[str, list[dict]]:
                 current["paragraphs"].append(cleaned)
     if not chapters:
         paragraphs = [clean_text(item) for item in re.split(r"\n{2,}", text) if len(clean_text(item)) > 30]
-        chapters = [{"title": "论文核心内容", "paragraphs": paragraphs[:30]}]
+        chapters = [{"title": "Thesis core content", "paragraphs": paragraphs[:30]}]
     return title or chapters[0]["title"], chapters[:8]
 
 
 def sentence_score(sentence: str) -> int:
-    keywords = ["设计", "实现", "测试", "结果", "方法", "系统", "模型", "控制", "实验", "分析", "方案", "结构", "创新"]
+    keywords = ["design", "implementation", "test", "result", "method", "system", "model", "control", "experiment", "analysis", "solution", "structure", "innovation"]
     return len(sentence) + sum(45 for key in keywords if key in sentence)
 
 
 def bullets_from_paragraphs(paragraphs: list[str], limit: int = 4) -> list[str]:
     sentences: list[str] = []
     for paragraph in paragraphs[:20]:
-        sentences.extend(item.strip() for item in re.split(r"[。；;]", paragraph) if len(item.strip()) >= 12)
+        sentences.extend(item.strip() for item in re.split(r"[.;]", paragraph) if len(item.strip()) >= 12)
     ranked = sorted(sentences, key=sentence_score, reverse=True)
     bullets = []
     seen = set()
@@ -308,7 +438,7 @@ def bullets_from_paragraphs(paragraphs: list[str], limit: int = 4) -> list[str]:
         bullets.append(sentence)
         if len(bullets) >= limit:
             break
-    return bullets or ["本页内容需要结合论文正文进一步核对。"]
+    return bullets or ["Check this slide against the thesis body."]
 
 
 def local_plan(text: str, style: str, source_name: str) -> dict:
@@ -318,19 +448,19 @@ def local_plan(text: str, style: str, source_name: str) -> dict:
             "title": title,
             "kind": "cover",
             "layout": "cover",
-            "bullets": ["毕业论文答辩汇报"],
+            "bullets": ["Thesis defense presentation"],
             "visual_type": "hero",
-            "visual": "以课题名称为主视觉，保持正式、清晰、有答辩感。",
-            "notes": "开场说明选题背景和汇报结构。",
+            "visual": "Use the topic title as the main visual, formal and clear.",
+            "notes": "Open with topic background and deck structure.",
         },
         {
-            "title": "汇报目录",
+            "title": "Agenda",
             "kind": "agenda",
             "layout": "agenda",
             "bullets": [chapter["title"] for chapter in chapters[:6]],
             "visual_type": "timeline",
-            "visual": "使用纵向流程目录，突出汇报顺序。",
-            "notes": "简要说明汇报顺序。",
+            "visual": "Use a vertical agenda flow to show the presentation order.",
+            "notes": "Briefly introduce the presentation order.",
         },
     ]
     for index, chapter in enumerate(chapters, start=1):
@@ -342,21 +472,21 @@ def local_plan(text: str, style: str, source_name: str) -> dict:
                 "layout": "content_visual",
                 "bullets": bullets,
                 "visual_type": "process" if index % 2 else "architecture",
-                "visual": "根据本页要点绘制系统结构、流程、数据图或实物图占位。",
+                "visual": "Draw a system structure, process, data chart, or image placeholder from this slide.",
                 "diagram": bullets[:4],
-                "notes": "围绕本页要点展开说明，避免逐字朗读。",
+                "notes": "Explain around the key points and avoid reading word by word.",
             }
         )
     slides.append(
         {
-            "title": "总结与展望",
+            "title": "Summary and Outlook",
             "kind": "summary",
             "layout": "summary",
-            "bullets": ["总结系统设计与实现结果", "说明测试结论与不足", "给出后续优化方向"],
+            "bullets": ["Summarize system design and implementation", "Explain test conclusions and limitations", "Describe future optimization directions"],
             "visual_type": "summary",
-            "visual": "使用三段式结论图。",
-            "diagram": ["完成内容", "主要结论", "后续工作"],
-            "notes": "收束贡献并自然引出提问。",
+            "visual": "Use a three-part conclusion diagram.",
+            "diagram": ["Completed work", "Main conclusion", "Future work"],
+            "notes": "Close with contributions and invite questions.",
         }
     )
     return {"title": title, "style": style, "source": source_name, "slides": slides[:14]}
@@ -365,11 +495,11 @@ def local_plan(text: str, style: str, source_name: str) -> dict:
 def load_prompt() -> str:
     if PROMPT_FILE.exists():
         return PROMPT_FILE.read_text(encoding="utf-8")
-    return "你是毕业论文答辩 PPT 总导演。必须只返回严格 JSON。"
+    return "You are a thesis defense PPT director. Return strict JSON only."
 
 
 def thesis_excerpt_for_slide(text: str, slide: dict) -> str:
-    title = re.sub(r"^\d+[.、]\s*", "", str(slide.get("title", ""))).strip()
+    title = re.sub(r"^\d+[.]\s*", "", str(slide.get("title", ""))).strip()
     if not title:
         return text[:18000]
     lines = text.splitlines()
@@ -400,12 +530,13 @@ def ai_outline(text: str, style: str, source_name: str, config: dict) -> dict | 
         return None
     prompt = load_prompt()
     user = (
-        "任务：先生成 PPT 全局故事线和每页页面蓝图，不要写满最终内容。\n"
-        f"视觉预设：{style}\n"
-        f"输入来源：{source_name}\n"
-        "返回 JSON：{title, style, source, narrative, slides:[{title, kind, layout, purpose, evidence_hint, visual_type, visual}]}\n"
-        "slides 建议 10-14 页，必须覆盖封面、目录、背景意义、方案/架构、核心实现、测试/结果、总结展望。\n\n"
-        f"论文内容：\n{text[:MAX_SOURCE_CHARS]}"
+        "Task: generate a global story line and slide blueprints first; do not write final dense content.\n"
+        f"Visual preset: {style}\n"
+        f"Input source: {source_name}\n"
+        "layout must be one of cover, agenda, content_visual, visual_left, cards, statement, summary. Do not rotate layouts by page number.\n"
+        "Return JSON: {title, style, source, narrative, slides:[{title, kind, layout, purpose, evidence_hint, visual_type, visual}]}\n"
+        "Use 10-14 slides and cover title, agenda, background, solution/architecture, implementation, tests/results, summary.\n\n"
+        f"Thesis content:\n{text[:MAX_SOURCE_CHARS]}"
     )
     try:
         print("PPT AI: generating deck outline...", flush=True)
@@ -425,7 +556,7 @@ def ai_outline(text: str, style: str, source_name: str, config: dict) -> dict | 
     if not isinstance(slides, list) or not slides:
         print("PPT WARN: AI outline returned no slides, using local planner.")
         return None
-    data["title"] = str(data.get("title") or "论文答辩汇报")
+    data["title"] = str(data.get("title") or "Thesis defense presentation")
     data["style"] = style
     data["source"] = source_name
     data["slides"] = slides[:MAX_SLIDES]
@@ -437,16 +568,17 @@ def ai_refine_slide(outline: dict, slide: dict, index: int, total: int, text: st
     prompt = load_prompt()
     excerpt = thesis_excerpt_for_slide(text, slide)
     user = (
-        "任务：逐页精修 PPT 页面规格。只返回这一页的 JSON 对象。\n"
-        f"全局标题：{outline.get('title', '论文答辩汇报')}\n"
-        f"页码：{index}/{total}\n"
-        f"视觉预设：{outline.get('style', '')}\n"
-        f"全局叙事：{outline.get('narrative', '')}\n"
-        f"页面蓝图：{json.dumps(slide, ensure_ascii=False)}\n\n"
-        "返回 JSON 字段：title, kind, layout, bullets, visual_type, visual, diagram, callout, notes。\n"
-        "要求：bullets 3-5 条且每条不超过 34 个汉字；diagram 是 2-6 个可画成图形节点的短标签；"
-        "callout 是本页一句结论；notes 是答辩讲稿提示。不得虚构论文没有的数据。\n\n"
-        f"与本页相关的论文摘录：\n{excerpt}"
+        "Task: refine one PPT slide spec. Return only one JSON object.\n"
+        f"Deck title: {outline.get('title', 'Thesis defense presentation')}\n"
+        f"Slide: {index}/{total}\n"
+        f"Visual preset: {outline.get('style', '')}\n"
+        f"Narrative: {outline.get('narrative', '')}\n"
+        f"Blueprint: {json.dumps(slide, ensure_ascii=False)}\n\n"
+        "layout must be one of cover, agenda, content_visual, visual_left, cards, statement, summary.\n"
+        "Return fields: title, kind, layout, bullets, visual_type, visual, diagram, callout, notes.\n"
+        "Rules: bullets 3-5 items, each concise; diagram has 2-6 short drawable node labels; "
+        "callout is one sentence; notes are speaker cues. Do not invent unsupported data.\n\n"
+        f"Relevant thesis excerpt:\n{excerpt}"
     )
     print(f"PPT AI SLIDE: {index}/{total} {slide.get('title', '')}", flush=True)
     content = chat_completion(
@@ -482,7 +614,7 @@ def ai_plan(text: str, style: str, source_name: str, config: dict) -> dict | Non
 
 def normalize_plan(plan: dict) -> dict:
     return {
-        "title": clean_text(str(plan.get("title") or "论文答辩汇报"))[:80],
+        "title": clean_text(str(plan.get("title") or "Thesis defense presentation"))[:80],
         "style": str(plan.get("style") or "infographic"),
         "source": str(plan.get("source") or ""),
         "narrative": clean_text(str(plan.get("narrative") or ""))[:500],
@@ -495,25 +627,25 @@ def normalize_slides(slides: list[dict]) -> list[dict]:
     for slide in slides[:MAX_SLIDES]:
         if not isinstance(slide, dict):
             continue
-        title = clean_text(str(slide.get("title", "")))[:60] or "未命名页面"
+        title = clean_text(str(slide.get("title", "")))[:60] or "Untitled slide"
         bullets = slide.get("bullets") or []
         if isinstance(bullets, str):
             bullets = [bullets]
-        bullets = [clean_text(str(item))[:80] for item in bullets if clean_text(str(item))][:5]
+        bullets = [compact_text(item, 42) for item in bullets if clean_text(str(item))][:5]
         diagram = slide.get("diagram") or []
         if isinstance(diagram, str):
-            diagram = [item.strip() for item in re.split(r"[,，/、;；\n]", diagram) if item.strip()]
-        diagram = [clean_text(str(item))[:24] for item in diagram if clean_text(str(item))][:6]
+            diagram = [item.strip() for item in re.split(r"[,/;\n]", diagram) if item.strip()]
+        diagram = [compact_text(item, 16) for item in diagram if clean_text(str(item))][:6]
         normalized.append(
             {
                 "title": title,
                 "kind": str(slide.get("kind") or "content"),
                 "layout": str(slide.get("layout") or "content_visual"),
-                "bullets": bullets or ["根据论文正文提炼本页要点。"],
+                "bullets": bullets or ["Extract this slide from the thesis body."],
                 "visual_type": str(slide.get("visual_type") or slide.get("kind") or "process"),
-                "visual": clean_text(str(slide.get("visual") or "预留图解区域。"))[:180],
+                "visual": compact_text(slide.get("visual") or "Reserved visual area.", 140),
                 "diagram": diagram,
-                "callout": clean_text(str(slide.get("callout") or ""))[:80],
+                "callout": compact_text(slide.get("callout") or "", 58),
                 "notes": clean_text(str(slide.get("notes") or ""))[:320],
             }
         )
@@ -523,45 +655,29 @@ def normalize_slides(slides: list[dict]) -> list[dict]:
 def write_artifacts(plan: dict) -> None:
     PPT_DIR.mkdir(parents=True, exist_ok=True)
     PPT_PLAN.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
-    outline_lines = [f"# {plan.get('title', '论文答辩汇报')} PPT 大纲", ""]
-    preview_lines = [f"# {plan.get('title', '论文答辩汇报')} PPT 预览", ""]
+    outline_lines = [f"# {plan.get('title', 'Thesis defense presentation')} PPT Outline", ""]
+    preview_lines = [f"# {plan.get('title', 'Thesis defense presentation')} PPT Preview", ""]
     if plan.get("narrative"):
-        outline_lines.extend(["## 汇报叙事", plan["narrative"], ""])
+        outline_lines.extend(["## Narrative", plan["narrative"], ""])
     for index, slide in enumerate(plan.get("slides", []), start=1):
-        outline_lines.append(f"{index}. {slide['title']}（{slide.get('kind', 'content')}）")
+        outline_lines.append(f"{index}. {slide['title']} ({slide.get('kind', 'content')})")
         preview_lines.extend([f"## {index}. {slide['title']}", ""])
         preview_lines.extend(f"- {item}" for item in slide.get("bullets", []))
         if slide.get("callout"):
-            preview_lines.extend(["", f"结论句：{slide['callout']}"])
+            preview_lines.extend(["", f"Callout: {slide['callout']}"])
         if slide.get("visual"):
-            preview_lines.extend(["", f"图解建议：{slide['visual']}"])
+            preview_lines.extend(["", f"Visual suggestion: {slide['visual']}"])
         if slide.get("notes"):
-            preview_lines.extend(["", f"讲稿提示：{slide['notes']}"])
+            preview_lines.extend(["", f"Speaker notes: {slide['notes']}"])
         preview_lines.append("")
     PPT_OUTLINE.write_text("\n".join(outline_lines).strip() + "\n", encoding="utf-8")
     PPT_PREVIEW.write_text("\n".join(preview_lines).strip() + "\n", encoding="utf-8")
 
 
-def blank_presentation(template_path: Path | None = None) -> Presentation:
-    if template_path is None:
-        prs = Presentation()
-    else:
-        template = convert_ppt_to_pptx(template_path)
-        if template is None or not template.exists():
-            print(f"PPT WARN: template unavailable, using default theme: {template_path}")
-            prs = Presentation()
-        else:
-            try:
-                prs = Presentation(str(template))
-            except Exception as exc:
-                print(f"PPT WARN: unable to read template, using default theme: {exc}")
-                prs = Presentation()
-    while len(prs.slides):
-        slide_id = prs.slides._sldIdLst[0]
-        rel_id = slide_id.rId
-        prs.part.drop_rel(rel_id)
-        prs.slides._sldIdLst.remove(slide_id)
-    return prs
+def blank_presentation(reference_paths: list[Path] | None = None) -> Presentation:
+    # Reference PPTs are design samples only. Starting from a blank package avoids
+    # accidentally carrying over hidden media, old layouts, or embedded content.
+    return Presentation()
 
 
 def set_background(slide, color: RGBColor) -> None:
@@ -591,6 +707,85 @@ def hex_to_rgb(value: str | None, fallback: RGBColor) -> RGBColor:
         return RGBColor(int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16))
     except ValueError:
         return fallback
+
+
+def color_luminance(value: str | None) -> float:
+    if not value:
+        return 1.0
+    value = value.strip().lstrip("#")
+    if len(value) != 6:
+        return 1.0
+    try:
+        r = int(value[0:2], 16) / 255
+        g = int(value[2:4], 16) / 255
+        b = int(value[4:6], 16) / 255
+    except ValueError:
+        return 1.0
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def usable_reference_accent(value: str | None) -> bool:
+    if not value:
+        return False
+    clean = value.strip().lstrip("#")
+    if len(clean) != 6:
+        return False
+    try:
+        r, g, b = int(clean[0:2], 16), int(clean[2:4], 16), int(clean[4:6], 16)
+    except ValueError:
+        return False
+    luminance = color_luminance(clean)
+    channel_spread = max(r, g, b) - min(r, g, b)
+    return luminance < 0.78 and channel_spread > 18
+
+
+def slot(x: float, y: float, w: float, h: float) -> dict[str, float]:
+    return {"x": x, "y": y, "w": w, "h": h}
+
+
+def preferred_visual_left(reference_style: dict | None) -> bool:
+    return bool(reference_style and reference_style.get("visual_side") == "left")
+
+
+def slide_layout_name(item: dict, reference_style: dict | None) -> str:
+    kind = str(item.get("kind") or "").lower()
+    raw = str(item.get("layout") or "content_visual").lower()
+    aliases = {
+        "two_column": "content_visual",
+        "content": "content_visual",
+        "focus": "cards",
+        "card": "cards",
+    }
+    layout = aliases.get(raw, raw)
+    if kind == "agenda":
+        return "agenda"
+    if kind == "summary":
+        return "summary"
+    if layout not in {"agenda", "content_visual", "visual_left", "cards", "statement", "summary"}:
+        layout = "content_visual"
+    if layout == "content_visual" and preferred_visual_left(reference_style):
+        return "visual_left"
+    return layout
+
+
+def layout_slots(layout: str) -> dict[str, dict[str, float]]:
+    if layout == "visual_left":
+        return {
+            "body": slot(4.25, 1.45, 4.95, 3.1),
+            "visual": slot(0.75, 1.45, 3.05, 3.25),
+            "callout": slot(4.25, 4.72, 4.95, 0.42),
+        }
+    if layout == "summary":
+        return {
+            "body": slot(0.85, 1.45, 5.15, 2.95),
+            "visual": slot(6.45, 1.65, 2.85, 2.65),
+            "callout": slot(0.85, 4.72, 5.15, 0.42),
+        }
+    return {
+        "body": slot(0.75, 1.45, 5.15, 3.15),
+        "visual": slot(6.35, 1.45, 3.05, 3.25),
+        "callout": slot(0.78, 4.72, 5.12, 0.42),
+    }
 
 
 def add_textbox(slide, left, top, width, height, text, size=24, color=None, bold=False, align=None):
@@ -633,12 +828,26 @@ def add_header(slide, text: str, theme, index: int, total: int) -> None:
     set_shape(line, theme["accent"])
 
 
-def add_callout(slide, text: str, theme) -> None:
+def add_footer(slide, theme, text: str = "Thesis defense") -> None:
+    add_textbox(slide, Inches(0.55), Inches(5.28), Inches(4.2), Inches(0.18), text, 8, theme["muted"])
+
+
+def add_decorative_band(slide, theme, variant: int) -> None:
+    top = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(10), Inches(0.9))
+    set_shape(top, theme["bg2"])
+    top.fill.transparency = 28
+    line = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.55), Inches(0.78), Inches(1.7), Inches(0.05))
+    set_shape(line, theme["accent3" if variant % 2 else "accent"])
+
+
+def add_callout(slide, text: str, theme, area: dict[str, float] | None = None) -> None:
     if not text:
         return
-    shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.75), Inches(4.95), Inches(8.5), Inches(0.38))
+    text = compact_text(text, 58)
+    area = area or slot(0.78, 4.72, 5.12, 0.42)
+    shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(area["x"]), Inches(area["y"]), Inches(area["w"]), Inches(area["h"]))
     set_shape(shape, theme["panel2"], theme["accent2"], 1)
-    add_textbox(slide, Inches(0.95), Inches(5.02), Inches(8.1), Inches(0.22), text, 11, theme["accent"], True, PP_ALIGN.CENTER)
+    add_textbox(slide, Inches(area["x"] + 0.18), Inches(area["y"] + 0.09), Inches(area["w"] - 0.36), Inches(0.18), text, 10, theme["accent"], True, PP_ALIGN.CENTER)
 
 
 def add_node(slide, x, y, w, h, text, theme, fill_key="panel", color_key="text", size=12):
@@ -654,69 +863,112 @@ def add_arrow(slide, x1, y1, x2, y2, theme):
     arrow.line.width = Pt(1.5)
 
 
-def add_architecture_visual(slide, item: dict, theme) -> None:
+def add_architecture_visual(slide, item: dict, theme, area: dict[str, float] | None = None) -> None:
     labels = item.get("diagram") or item.get("bullets", [])[:4]
-    labels = (labels + ["输入", "处理", "输出"])[:4]
-    left, top = 6.45, 1.45
-    panel = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(left), Inches(top), Inches(3.0), Inches(3.35))
+    labels = (labels + ["Input", "Process", "Output"])[:4]
+    area = area or slot(6.45, 1.45, 3.0, 3.35)
+    left, top, width, height = area["x"], area["y"], area["w"], area["h"]
+    panel = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(left), Inches(top), Inches(width), Inches(height))
     set_shape(panel, theme["panel"], theme["accent"], 1)
-    add_textbox(slide, Inches(left + 0.18), Inches(top + 0.15), Inches(2.64), Inches(0.35), "结构图", 12, theme["accent"], True, PP_ALIGN.CENTER)
+    add_textbox(slide, Inches(left + 0.18), Inches(top + 0.15), Inches(width - 0.36), Inches(0.35), "Structure", 12, theme["accent"], True, PP_ALIGN.CENTER)
     for idx, label in enumerate(labels[:4]):
-        y = top + 0.65 + idx * 0.62
-        add_node(slide, left + 0.42, y, 2.15, 0.38, label, theme, "panel2", "text", 10)
+        y = top + 0.65 + idx * min(0.62, max(0.48, (height - 1.1) / 4))
+        add_node(slide, left + 0.35, y, max(1.8, width - 0.7), 0.38, label, theme, "panel2", "text", 10)
         if idx < min(len(labels), 4) - 1:
-            add_arrow(slide, left + 1.5, y + 0.39, left + 1.5, y + 0.58, theme)
+            add_arrow(slide, left + width / 2, y + 0.39, left + width / 2, y + 0.58, theme)
 
 
-def add_process_visual(slide, item: dict, theme) -> None:
+def add_process_visual(slide, item: dict, theme, area: dict[str, float] | None = None) -> None:
     labels = item.get("diagram") or item.get("bullets", [])[:4]
-    labels = labels[:4] or ["问题", "方案", "实现", "验证"]
-    left, top = 6.35, 1.75
+    labels = labels[:4] or ["Problem", "Solution", "Build", "Verify"]
+    area = area or slot(6.35, 1.75, 3.05, 2.9)
+    left, top, width = area["x"], area["y"], area["w"]
     for idx, label in enumerate(labels):
         y = top + idx * 0.72
-        add_node(slide, left + 0.22, y, 2.45, 0.44, label, theme, "panel2", "text", 10)
+        add_node(slide, left + 0.22, y, max(2.0, width - 0.6), 0.44, label, theme, "panel2", "text", 10)
         badge = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(left - 0.15), Inches(y + 0.05), Inches(0.34), Inches(0.34))
         set_shape(badge, theme["accent2" if idx % 2 else "accent"])
         add_textbox(slide, Inches(left - 0.09), Inches(y + 0.1), Inches(0.22), Inches(0.16), str(idx + 1), 8, RGBColor(255, 255, 255), True, PP_ALIGN.CENTER)
 
 
-def add_compare_visual(slide, item: dict, theme) -> None:
+def add_compare_visual(slide, item: dict, theme, area: dict[str, float] | None = None) -> None:
     labels = item.get("diagram") or item.get("bullets", [])[:4]
-    labels = labels[:4] or ["现状", "改进", "效果"]
-    left, top = 6.35, 1.55
+    labels = labels[:4] or ["Current", "Improved", "Result"]
+    area = area or slot(6.35, 1.55, 3.05, 2.9)
+    left, top, width = area["x"], area["y"], area["w"]
     for idx, label in enumerate(labels[:4]):
         y = top + idx * 0.66
-        bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(left + 0.1), Inches(y + 0.28), Inches(2.35 - idx * 0.28), Inches(0.12))
+        bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(left + 0.1), Inches(y + 0.28), Inches(max(1.2, width - 0.7 - idx * 0.28)), Inches(0.12))
         set_shape(bar, theme["accent2" if idx % 2 else "accent"])
-        add_textbox(slide, Inches(left + 0.1), Inches(y), Inches(2.6), Inches(0.25), label, 11, theme["text"], True)
+        add_textbox(slide, Inches(left + 0.1), Inches(y), Inches(width - 0.25), Inches(0.25), label, 11, theme["text"], True)
 
 
-def add_summary_visual(slide, item: dict, theme) -> None:
+def add_summary_visual(slide, item: dict, theme, area: dict[str, float] | None = None) -> None:
     labels = item.get("diagram") or item.get("bullets", [])[:3]
-    labels = labels[:3] or ["完成内容", "主要结论", "后续工作"]
+    labels = labels[:3] or ["Completed", "Conclusion", "Future work"]
+    if area:
+        left, top, width = area["x"], area["y"], area["w"]
+        for idx, label in enumerate(labels):
+            add_node(slide, left + 0.15, top + idx * 0.72, max(2.0, width - 0.3), 0.5, label, theme, "panel2", "text", 11)
+        return
     for idx, label in enumerate(labels):
         add_node(slide, 1.0 + idx * 2.95, 2.85, 2.15, 0.82, label, theme, "panel2", "text", 13)
 
 
-def visual_skill_payload(item: dict, index: int, total: int, style: str, theme: dict) -> dict:
+def add_agenda_cards(slide, bullets: list[str], theme) -> None:
+    for idx, bullet in enumerate(bullets[:6]):
+        row, col = divmod(idx, 2)
+        x = 1.05 + col * 4.0
+        y = 1.35 + row * 1.08
+        card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y), Inches(3.55), Inches(0.72))
+        set_shape(card, theme["panel"], theme["panel2"], 1)
+        badge = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(x + 0.18), Inches(y + 0.18), Inches(0.36), Inches(0.36))
+        set_shape(badge, theme["accent2" if idx % 2 else "accent"])
+        add_textbox(slide, Inches(x + 0.25), Inches(y + 0.24), Inches(0.22), Inches(0.12), str(idx + 1), 8, RGBColor(255, 255, 255), True, PP_ALIGN.CENTER)
+        add_textbox(slide, Inches(x + 0.68), Inches(y + 0.2), Inches(2.68), Inches(0.28), bullet, 13, theme["text"], True)
+
+
+def add_focus_cards(slide, item: dict, theme) -> None:
+    bullets = item.get("bullets", [])[:4]
+    for idx, bullet in enumerate(bullets):
+        x = 0.78 + (idx % 2) * 2.75
+        y = 1.46 + (idx // 2) * 1.38
+        card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y), Inches(2.38), Inches(0.98))
+        set_shape(card, theme["panel"], theme["panel2"], 1)
+        stripe = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(0.08), Inches(0.98))
+        set_shape(stripe, theme["accent2" if idx % 2 else "accent"])
+        add_textbox(slide, Inches(x + 0.23), Inches(y + 0.18), Inches(1.96), Inches(0.52), compact_text(bullet, 28), 11, theme["text"], True, PP_ALIGN.CENTER)
+
+
+def add_statement_layout(slide, item: dict, theme) -> None:
+    callout = item.get("callout") or (item.get("bullets") or [""])[0]
+    shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.78), Inches(1.45), Inches(5.05), Inches(1.2))
+    set_shape(shape, theme["panel2"], theme["accent"], 1)
+    add_textbox(slide, Inches(1.08), Inches(1.75), Inches(4.45), Inches(0.5), compact_text(callout, 36), 17, theme["accent"], True, PP_ALIGN.CENTER)
+    add_bullets(slide, item.get("bullets", [])[1:5], theme, left=0.95, top=3.0, width=4.75, height=1.55, size=13)
+
+
+def visual_skill_payload(item: dict, index: int, total: int, style: str, theme: dict, reference_style: dict | None = None, area: dict[str, float] | None = None) -> dict:
+    area = area or slot(6.35, 1.45, 3.05, 3.45)
     return {
         "contract": "ppt_visual_skill/v1",
         "index": index,
         "total": total,
         "style": style,
         "slide": item,
-        "canvas": {"width_in": 3.05, "height_in": 3.55},
+        "canvas": {"width_in": area["w"], "height_in": area["h"]},
         "theme": {key: rgb_to_hex(value) for key, value in theme.items()},
+        "reference_style": reference_style or {},
         "output_dir": str(PPT_VISUAL_DIR),
     }
 
 
-def run_visual_skill(item: dict, index: int, total: int, style: str, theme: dict, config: dict) -> dict | None:
+def run_visual_skill(item: dict, index: int, total: int, style: str, theme: dict, config: dict, reference_style: dict | None = None, area: dict[str, float] | None = None) -> dict | None:
     enabled, command, timeout = visual_skill_config(config)
     if not enabled:
         return None
     PPT_VISUAL_DIR.mkdir(parents=True, exist_ok=True)
-    payload = visual_skill_payload(item, index, total, style, theme)
+    payload = visual_skill_payload(item, index, total, style, theme, reference_style, area)
     try:
         result = subprocess.run(
             command,
@@ -800,11 +1052,12 @@ def add_skill_elements(slide, spec: dict, theme, left: float, top: float, width:
     return True
 
 
-def add_skill_visual(slide, item: dict, theme, style: str, config: dict, index: int, total: int) -> bool:
-    spec = run_visual_skill(item, index, total, style, theme, config)
+def add_skill_visual(slide, item: dict, theme, style: str, config: dict, index: int, total: int, reference_style: dict | None = None, area: dict[str, float] | None = None) -> bool:
+    area = area or slot(6.35, 1.45, 3.05, 3.45)
+    spec = run_visual_skill(item, index, total, style, theme, config, reference_style, area)
     if not spec:
         return False
-    left, top, width, height = 6.35, 1.45, 3.05, 3.45
+    left, top, width, height = area["x"], area["y"], area["w"], area["h"]
     if str(spec.get("type", "")).lower() == "image" and add_skill_image(slide, spec, left, top, width, height):
         return True
     if add_skill_elements(slide, spec, theme, left, top, width, height):
@@ -815,27 +1068,26 @@ def add_skill_visual(slide, item: dict, theme, style: str, config: dict, index: 
     return False
 
 
-def add_visual(slide, item: dict, theme, style: str, config: dict, index: int, total: int) -> None:
-    if add_skill_visual(slide, item, theme, style, config, index, total):
-        add_textbox(slide, Inches(6.45), Inches(4.78), Inches(2.85), Inches(0.35), item.get("visual", ""), 9, theme["muted"], False, PP_ALIGN.CENTER)
+def add_visual(slide, item: dict, theme, style: str, config: dict, index: int, total: int, reference_style: dict | None = None, area: dict[str, float] | None = None) -> None:
+    area = area or slot(6.35, 1.45, 3.05, 3.25)
+    if add_skill_visual(slide, item, theme, style, config, index, total, reference_style, area):
         return
     visual_type = (item.get("visual_type") or "").lower()
-    if "arch" in visual_type or "架构" in visual_type or item.get("kind") == "architecture" or style == "architecture":
-        add_architecture_visual(slide, item, theme)
-    elif "compare" in visual_type or "对比" in visual_type or "result" in item.get("kind", ""):
-        add_compare_visual(slide, item, theme)
+    if "arch" in visual_type or item.get("kind") == "architecture" or style == "architecture":
+        add_architecture_visual(slide, item, theme, area)
+    elif "compare" in visual_type or "result" in item.get("kind", ""):
+        add_compare_visual(slide, item, theme, area)
     elif "summary" in visual_type or item.get("kind") == "summary":
-        add_summary_visual(slide, item, theme)
+        add_summary_visual(slide, item, theme, area)
     else:
-        add_process_visual(slide, item, theme)
-    add_textbox(slide, Inches(6.45), Inches(4.78), Inches(2.85), Inches(0.35), item.get("visual", ""), 9, theme["muted"], False, PP_ALIGN.CENTER)
+        add_process_visual(slide, item, theme, area)
 
 
-def build_presentation(plan: dict, style: str, template_path: Path | None = None, config: dict | None = None) -> Presentation:
+def build_presentation(plan: dict, style: str, reference_paths: list[Path] | None = None, config: dict | None = None, reference_style: dict | None = None) -> Presentation:
     config = config or {}
-    theme = THEMES.get(style, THEMES["infographic"])
+    theme = apply_reference_style(THEMES.get(style, THEMES["infographic"]), reference_style)
     slides = normalize_slides(plan.get("slides", []))
-    prs = blank_presentation(template_path)
+    prs = blank_presentation(reference_paths)
     prs.slide_width = Inches(10)
     prs.slide_height = Inches(5.625)
     total = max(1, len(slides))
@@ -845,26 +1097,42 @@ def build_presentation(plan: dict, style: str, template_path: Path | None = None
         slide = prs.slides.add_slide(prs.slide_layouts[6])
         set_background(slide, theme["bg"])
         kind = item.get("kind", "content")
-        layout = item.get("layout", "content_visual")
+        layout = slide_layout_name(item, reference_style)
+        areas = layout_slots(layout)
         if kind == "cover" or index == 1:
-            add_textbox(slide, Inches(0.78), Inches(1.22), Inches(8.45), Inches(1.2), item["title"], 30, theme["text"], True, PP_ALIGN.CENTER)
-            subtitle = item["bullets"][0] if item.get("bullets") else "毕业论文答辩汇报"
-            add_textbox(slide, Inches(1.2), Inches(2.58), Inches(7.6), Inches(0.48), subtitle, 17, theme["muted"], False, PP_ALIGN.CENTER)
-            add_summary_visual(slide, {"diagram": ["研究背景", "设计实现", "测试总结"]}, theme)
+            hero = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(10), Inches(5.625))
+            set_shape(hero, theme["bg2"])
+            accent = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(0.55), Inches(5.625))
+            set_shape(accent, theme["accent"])
+            ribbon = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.55), Inches(4.82), Inches(9.45), Inches(0.34))
+            set_shape(ribbon, theme["accent2"])
+            add_textbox(slide, Inches(0.95), Inches(1.18), Inches(7.95), Inches(1.25), item["title"], 30, theme["text"], True, PP_ALIGN.LEFT)
+            subtitle = item["bullets"][0] if item.get("bullets") else "Thesis defense presentation"
+            add_textbox(slide, Inches(1.0), Inches(2.62), Inches(5.8), Inches(0.42), subtitle, 17, theme["muted"], False, PP_ALIGN.LEFT)
+            add_summary_visual(slide, {"diagram": ["Background", "Design", "Testing"]}, theme)
             continue
+        add_decorative_band(slide, theme, index)
         add_header(slide, item["title"], theme, index, total)
         if kind == "agenda" or layout == "agenda":
-            add_bullets(slide, item.get("bullets", []), theme, left=1.1, top=1.45, width=4.7, height=3.2, size=18)
-            if not add_skill_visual(slide, item, theme, style, config, index, total):
-                add_process_visual(slide, item, theme)
+            add_agenda_cards(slide, item.get("bullets", []), theme)
         elif kind == "summary" or layout == "summary":
-            add_bullets(slide, item.get("bullets", []), theme, left=1.0, top=1.45, width=5.2, height=1.1, size=17)
-            if not add_skill_visual(slide, item, theme, style, config, index, total):
-                add_summary_visual(slide, item, theme)
+            body = areas["body"]
+            add_bullets(slide, item.get("bullets", []), theme, left=body["x"], top=body["y"], width=body["w"], height=body["h"], size=15)
+            if not add_skill_visual(slide, item, theme, style, config, index, total, reference_style, areas["visual"]):
+                add_summary_visual(slide, item, theme, areas["visual"])
+        elif layout == "statement":
+            add_statement_layout(slide, item, theme)
+            add_visual(slide, item, theme, style, config, index, total, reference_style, areas["visual"])
+        elif layout == "cards":
+            add_focus_cards(slide, item, theme)
+            add_visual(slide, item, theme, style, config, index, total, reference_style, areas["visual"])
         else:
-            add_bullets(slide, item.get("bullets", []), theme)
-            add_visual(slide, item, theme, style, config, index, total)
-        add_callout(slide, item.get("callout", ""), theme)
+            body = areas["body"]
+            add_bullets(slide, item.get("bullets", []), theme, left=body["x"], top=body["y"], width=body["w"], height=body["h"], size=16)
+            add_visual(slide, item, theme, style, config, index, total, reference_style, areas["visual"])
+        if layout != "agenda":
+            add_callout(slide, item.get("callout", ""), theme, areas.get("callout"))
+        add_footer(slide, theme)
     return prs
 
 
@@ -873,7 +1141,7 @@ def main() -> int:
     parser.add_argument("--input", help="input thesis file: md/docx/pdf/txt. Default: output/thesis.md")
     parser.add_argument("--output", default=str(OUTPUT_PPTX), help="output pptx path")
     parser.add_argument("--style", default="infographic", choices=sorted(THEMES), help="visual style preset")
-    parser.add_argument("--template", help="optional reference PPT template: pptx or ppt")
+    parser.add_argument("--template", action="append", help="optional reference PPT design sample: pptx or ppt. Can be used multiple times")
     parser.add_argument("--no-ai", action="store_true", help="skip AI planning and use local extraction")
     args = parser.parse_args()
 
@@ -886,8 +1154,14 @@ def main() -> int:
     else:
         plan = normalize_plan(plan)
     write_artifacts(plan)
-    template_path = Path(args.template) if args.template else None
-    prs = build_presentation(plan, args.style, template_path=template_path, config=config)
+    reference_paths = [Path(item) for item in (args.template or [])]
+    if reference_paths:
+        reference_style = analyze_ppt_references(reference_paths)
+    else:
+        reference_style = None
+        if PPT_REFERENCE_STYLE.exists():
+            PPT_REFERENCE_STYLE.unlink()
+    prs = build_presentation(plan, args.style, reference_paths=reference_paths, config=config, reference_style=reference_style)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     prs.save(output)

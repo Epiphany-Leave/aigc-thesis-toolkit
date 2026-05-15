@@ -4,7 +4,8 @@
 The runner is a real runtime adapter:
 - read the slide visual contract from stdin
 - call the existing OpenAI-compatible API configured in configs/local.yaml
-- return PPT shape elements on stdout for generate_ppt.py to insert
+- ask the model for semantic diagram content, not freeform coordinates
+- map that semantic content to stable PPT shape elements
 
 It intentionally returns editable PPT shapes instead of a bitmap by default.
 That keeps diagrams easy to revise in PowerPoint and avoids extra image
@@ -118,23 +119,85 @@ def parse_json_object(content: str) -> dict:
         return json.loads(match.group(0))
 
 
-def fallback_elements(payload: dict) -> list[dict]:
+def slide_labels(payload: dict, limit: int = 5) -> list[str]:
     slide = payload.get("slide", {})
-    theme = payload.get("theme", {})
     labels = slide.get("diagram") or slide.get("bullets") or []
     if isinstance(labels, str):
         labels = [item.strip() for item in re.split(r"[,，/、;；\n]", labels) if item.strip()]
-    labels = [clean_text(item)[:18] for item in labels if clean_text(item)][:4] or ["问题", "方案", "实现", "验证"]
+    labels = [clean_text(item)[:18] for item in labels if clean_text(item)]
+    return labels[:limit] or ["问题", "方案", "实现", "验证"]
+
+
+def semantic_fallback(payload: dict) -> dict:
+    slide = payload.get("slide", {})
     visual_type = str(slide.get("visual_type") or slide.get("kind") or "").lower()
+    labels = slide_labels(payload, 5)
     if "arch" in visual_type or "架构" in visual_type:
-        labels = (labels + ["输入", "处理", "输出"])[:4]
-        elements = [{"type": "text", "x": 0.1, "y": 0.0, "w": 2.85, "h": 0.25, "text": "AI 架构图", "size": 10, "bold": True, "align": "center", "color": theme.get("accent", "#2f4858")}]
-        for index, label in enumerate(labels):
-            y = 0.45 + index * 0.62
-            elements.append({"type": "box", "x": 0.36, "y": y, "w": 2.25, "h": 0.38, "text": label, "fill": theme.get("panel2", "#e8f1f8"), "line": theme.get("accent", "#2f4858"), "size": 9})
-            if index < len(labels) - 1:
-                elements.append({"type": "arrow", "x": 1.5, "y": y + 0.4, "x2": 1.5, "y2": y + 0.56})
-        return elements
+        return {"diagram_kind": "architecture", "title": "结构关系", "nodes": (labels + ["输入", "处理", "输出"])[:4], "relations": []}
+    if "compare" in visual_type or "result" in visual_type or "对比" in visual_type:
+        return {"diagram_kind": "compare", "title": "对比要点", "nodes": labels[:4], "relations": []}
+    if "summary" in visual_type:
+        return {"diagram_kind": "summary", "title": "总结", "nodes": labels[:3], "relations": []}
+    return {"diagram_kind": "process", "title": "关键流程", "nodes": labels[:4], "relations": []}
+
+
+def semantic_nodes(data: dict, payload: dict, limit: int = 5) -> list[str]:
+    nodes = data.get("nodes") or data.get("steps") or data.get("items") or []
+    if isinstance(nodes, str):
+        nodes = [item.strip() for item in re.split(r"[,，/、;；\n]", nodes) if item.strip()]
+    if isinstance(nodes, list):
+        labels = []
+        for item in nodes:
+            if isinstance(item, dict):
+                label = item.get("label") or item.get("title") or item.get("name") or item.get("text")
+            else:
+                label = item
+            if clean_text(label):
+                labels.append(clean_text(label)[:18])
+        if labels:
+            return labels[:limit]
+    return slide_labels(payload, limit)
+
+
+def semantic_title(data: dict, fallback: str) -> str:
+    return clean_text(data.get("title") or data.get("caption") or fallback)[:18]
+
+
+def safe_float(value, fallback: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def safe_int(value, fallback: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def fallback_elements(payload: dict) -> list[dict]:
+    return elements_from_semantic(semantic_fallback(payload), payload)
+
+
+def architecture_elements(data: dict, payload: dict) -> list[dict]:
+    theme = payload.get("theme", {})
+    labels = (semantic_nodes(data, payload, 4) + ["输入", "处理", "输出"])[:4]
+    elements = [
+        {"type": "text", "x": 0.05, "y": 0.0, "w": 2.95, "h": 0.24, "text": semantic_title(data, "结构关系"), "size": 10, "bold": True, "align": "center", "color": theme.get("accent", "#2f4858")},
+    ]
+    for index, label in enumerate(labels):
+        y = 0.44 + index * 0.64
+        elements.append({"type": "box", "x": 0.36, "y": y, "w": 2.25, "h": 0.4, "text": label, "fill": theme.get("panel2", "#e8f1f8"), "line": theme.get("accent", "#2f4858"), "size": 9})
+        if index < len(labels) - 1:
+            elements.append({"type": "arrow", "x": 1.5, "y": y + 0.42, "x2": 1.5, "y2": y + 0.58})
+    return elements
+
+
+def process_elements(data: dict, payload: dict) -> list[dict]:
+    theme = payload.get("theme", {})
+    labels = semantic_nodes(data, payload, 4)
     elements = []
     for index, label in enumerate(labels):
         y = 0.45 + index * 0.68
@@ -143,14 +206,48 @@ def fallback_elements(payload: dict) -> list[dict]:
     return elements
 
 
+def compare_elements(data: dict, payload: dict) -> list[dict]:
+    theme = payload.get("theme", {})
+    labels = semantic_nodes(data, payload, 4)
+    elements = [{"type": "text", "x": 0.05, "y": 0.02, "w": 2.9, "h": 0.24, "text": semantic_title(data, "对比概览"), "size": 10, "bold": True, "align": "center", "color": theme.get("accent", "#1976d2")}]
+    for index, label in enumerate(labels[:4]):
+        y = 0.45 + index * 0.56
+        elements.append({"type": "text", "x": 0.1, "y": y, "w": 2.5, "h": 0.2, "text": label, "size": 8, "bold": True, "color": theme.get("text", "#1f2937")})
+        elements.append({"type": "bar", "x": 0.12, "y": y + 0.27, "w": 2.45 - index * 0.24, "h": 0.12, "fill": theme.get("accent2" if index % 2 else "accent", "#1976d2")})
+    return elements
+
+
+def summary_elements(data: dict, payload: dict) -> list[dict]:
+    theme = payload.get("theme", {})
+    labels = semantic_nodes(data, payload, 3)[:3]
+    elements = [{"type": "text", "x": 0.05, "y": 0.02, "w": 2.9, "h": 0.24, "text": semantic_title(data, "核心结论"), "size": 10, "bold": True, "align": "center", "color": theme.get("accent", "#1976d2")}]
+    for index, label in enumerate(labels):
+        x = 0.2 + index * 0.92
+        elements.append({"type": "box", "x": x, "y": 1.15, "w": 0.75, "h": 0.75, "text": label, "fill": theme.get("panel2", "#ebf7ff"), "line": theme.get("accent", "#1976d2"), "size": 8})
+    return elements
+
+
+def elements_from_semantic(data: dict, payload: dict) -> list[dict]:
+    kind = str(data.get("diagram_kind") or data.get("kind") or payload.get("slide", {}).get("visual_type") or "").lower()
+    if "arch" in kind or "架构" in kind:
+        elements = architecture_elements(data, payload)
+    elif "compare" in kind or "result" in kind or "对比" in kind:
+        elements = compare_elements(data, payload)
+    elif "summary" in kind or "总结" in kind:
+        elements = summary_elements(data, payload)
+    else:
+        elements = process_elements(data, payload)
+    return elements[:14]
+
+
 def clamp_element(element: dict, theme: dict) -> dict:
     kind = str(element.get("type") or "box").lower()
     if kind not in {"box", "circle", "oval", "text", "arrow", "bar"}:
         kind = "box"
-    x = max(0.0, min(2.9, float(element.get("x", 0.2))))
-    y = max(0.0, min(3.3, float(element.get("y", 0.2))))
-    w = max(0.08, min(3.0 - x, float(element.get("w", element.get("width", 1.0)))))
-    h = max(0.08, min(3.45 - y, float(element.get("h", element.get("height", 0.35)))))
+    x = max(0.0, min(2.9, safe_float(element.get("x", 0.2), 0.2)))
+    y = max(0.0, min(3.3, safe_float(element.get("y", 0.2), 0.2)))
+    w = max(0.08, min(3.0 - x, safe_float(element.get("w", element.get("width", 1.0)), 1.0)))
+    h = max(0.08, min(3.45 - y, safe_float(element.get("h", element.get("height", 0.35)), 0.35)))
     safe = {
         "type": kind,
         "x": round(x, 3),
@@ -161,12 +258,12 @@ def clamp_element(element: dict, theme: dict) -> dict:
         "fill": str(element.get("fill") or theme.get("panel2") or "#ebf7ff"),
         "line": str(element.get("line") or theme.get("accent") or "#1976d2"),
         "color": str(element.get("color") or theme.get("text") or "#1f2937"),
-        "size": int(element.get("size", 9)),
+        "size": safe_int(element.get("size", 9), 9),
         "bold": bool(element.get("bold", True)),
     }
     if kind == "arrow":
-        safe["x2"] = round(max(0.0, min(3.0, float(element.get("x2", element.get("to_x", x + 0.3))))), 3)
-        safe["y2"] = round(max(0.0, min(3.45, float(element.get("y2", element.get("to_y", y + 0.3))))), 3)
+        safe["x2"] = round(max(0.0, min(3.0, safe_float(element.get("x2", element.get("to_x", x + 0.3)), x + 0.3))), 3)
+        safe["y2"] = round(max(0.0, min(3.45, safe_float(element.get("y2", element.get("to_y", y + 0.3)), y + 0.3))), 3)
     if element.get("align"):
         safe["align"] = str(element.get("align"))
     return safe
@@ -174,9 +271,12 @@ def clamp_element(element: dict, theme: dict) -> dict:
 
 def normalize_output(data: dict, payload: dict) -> dict:
     theme = payload.get("theme", {})
-    elements = data.get("elements") if isinstance(data, dict) else None
-    if not isinstance(elements, list) or not elements:
-        elements = fallback_elements(payload)
+    if not isinstance(data, dict):
+        data = semantic_fallback(payload)
+    if isinstance(data.get("elements"), list):
+        elements = data["elements"]
+    else:
+        elements = elements_from_semantic(data, payload)
     elements = [clamp_element(item, theme) for item in elements if isinstance(item, dict)][:18]
     return {"type": "ppt_shapes", "elements": elements or fallback_elements(payload)}
 
@@ -184,24 +284,31 @@ def normalize_output(data: dict, payload: dict) -> dict:
 def build_messages(payload: dict) -> list[dict]:
     slide = payload.get("slide", {})
     theme = payload.get("theme", {})
+    reference_style = payload.get("reference_style", {})
     system = (
-        "你是 PPT 图解 skill runner。根据输入的答辩页信息，生成可编辑 PPT 形状 JSON。"
+        "你是 PPT 图解内容设计师。根据输入的答辩页信息，生成图解语义，不要生成坐标。"
         "只能返回严格 JSON，不要 Markdown。不要虚构论文没有的数据。"
     )
     user = {
-        "task": "为一页毕业论文答辩 PPT 生成右侧图解形状。",
-        "contract": "只返回 {type:'ppt_shapes', elements:[...]}",
-        "allowed_element_types": ["box", "circle", "oval", "text", "arrow", "bar"],
-        "coordinate_system": "x/y/w/h 单位是英寸，相对 3.05 x 3.45 的图解区域左上角；x 0-3.0，y 0-3.45。",
-        "shape_requirements": [
-            "元素 4-10 个，文字短，适合答辩 PPT。",
-            "架构图用 box + arrow 表示层级/流向。",
-            "流程图用 circle 编号 + box 表示步骤。",
-            "对比/结果图用 text + bar 表示差异，不能编造具体数值。",
-            "文字不要超过 18 个汉字。"
+        "task": "为一页毕业论文答辩 PPT 设计右侧图解内容。",
+        "contract": "只返回 {diagram_kind,title,nodes,relations,highlight}",
+        "diagram_kind_options": ["architecture", "process", "compare", "summary"],
+        "semantic_requirements": [
+            "nodes 3-5 个，每个节点不超过 10 个汉字。",
+            "relations 可选，只写真实关系，不要编造数值。",
+            "highlight 是一句 18 字以内的图解结论。",
+            "不要生成 x/y/w/h 坐标，布局由程序负责。"
         ],
         "slide": slide,
         "theme": theme,
+        "reference_style": {
+            "visual_side": reference_style.get("visual_side"),
+            "palette": reference_style.get("palette", [])[:6],
+            "text_anchor_x": reference_style.get("text_anchor_x"),
+            "media_anchor_x": reference_style.get("media_anchor_x"),
+            "sample_count": reference_style.get("count", 0),
+            "privacy_note": "参考 PPT 只提供布局/色彩统计，不包含原文字和图片内容。",
+        },
     }
     return [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(user, ensure_ascii=False)}]
 

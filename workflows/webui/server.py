@@ -579,7 +579,7 @@ def save_ppt_upload(content_type, body):
 def save_ppt_template_upload(content_type, body):
     marker = "boundary="
     if marker not in content_type:
-        return {"saved": 0, "message": "没有收到 PPT 模板文件。"}
+        return {"saved": 0, "message": "没有收到参考 PPT 文件。"}
     boundary = content_type.split(marker, 1)[1].strip().strip('"').encode()
     delimiter = b"--" + boundary
     PPT_TEMPLATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -604,9 +604,9 @@ def save_ppt_template_upload(content_type, body):
         target.write_bytes(content)
         saved.append(target)
     if not saved:
-        return {"saved": 0, "message": "请选择 ppt 或 pptx 模板文件。"}
+        return {"saved": 0, "message": "请选择 ppt 或 pptx 参考 PPT 文件。"}
     latest = saved[-1].relative_to(WORK).as_posix()
-    return {"saved": len(saved), "template": latest, "message": f"已导入 {len(saved)} 个 PPT 模板文件。"}
+    return {"saved": len(saved), "template": latest, "message": f"已导入 {len(saved)} 个参考 PPT。生成时只分析布局、色彩和母版结构，不复用文字与图片内容。"}
 
 
 def multipart_filename(header):
@@ -680,20 +680,27 @@ def run_ppt_command(style="infographic", source="", template=""):
             return False, "PPT 输入文件不存在。"
         command.extend(["--input", str(source_path)])
     if template:
-        template_path = (WORK / template).resolve()
-        try:
-            template_path.relative_to(WORK.resolve())
-        except ValueError:
-            return False, "PPT 模板文件必须位于项目目录内。"
-        if not template_path.exists():
-            return False, "PPT 模板文件不存在。"
-        command.extend(["--template", str(template_path)])
+        if template == "__all__":
+            template_paths = [Path(item["path"]) for item in list_ppt_templates()]
+            if not template_paths:
+                return False, "还没有导入参考 PPT。"
+        else:
+            template_paths = [Path(template)]
+        for item in template_paths:
+            template_path = (WORK / item).resolve()
+            try:
+                template_path.relative_to(WORK.resolve())
+            except ValueError:
+                return False, "参考 PPT 文件必须位于项目目录内。"
+            if not template_path.exists():
+                return False, "参考 PPT 文件不存在。"
+            command.extend(["--template", str(template_path)])
     ok, message = RUNNER.start(command)
     if not ok:
         return ok, message
     source_label = source or "output/thesis.md"
-    template_label = template or "默认模板"
-    return True, f"PPT 生成已启动：输入 {source_label}，模板 {template_label}，风格 {style}。"
+    template_label = "全部参考 PPT" if template == "__all__" else (template or "默认设计")
+    return True, f"PPT 生成已启动：输入 {source_label}，参考设计 {template_label}，风格 {style}。"
 
 
 def frontend_sources_newer_than_dist():

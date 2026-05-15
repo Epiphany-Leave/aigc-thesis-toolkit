@@ -290,13 +290,14 @@ function App() {
       form.append("files", entry.file, entry.file.name);
     }
     if (!entries.length) {
-      setNotice("请先选择一个 ppt 或 pptx 模板文件。");
+      setNotice("请先选择一个 ppt 或 pptx 参考 PPT。");
       return;
     }
     const response = await fetch("/api/ppt-template-upload", { method: "POST", body: form });
     const result = await response.json();
-    setNotice(result.message || "PPT 模板已导入。");
-    if (result.template) setPptTemplate(result.template);
+    setNotice(result.message || "参考 PPT 已导入。");
+    if (result.saved > 1) setPptTemplate("__all__");
+    else if (result.template) setPptTemplate(result.template);
     if (pptTemplateInputRef.current) pptTemplateInputRef.current.value = "";
     await refresh({ keepForms: true });
   }
@@ -605,10 +606,10 @@ function App() {
                       onDrop={handlePptTemplateDrop}
                     >
                       <FileArchive size={30} />
-                      <strong>导入参考 PPT 模板</strong>
-                      <span>支持 pptx；安装 LibreOffice 后可尝试 ppt。生成时会参考模板尺寸和母版风格。</span>
+                      <strong>导入参考 PPT</strong>
+                      <span>支持多个 pptx；安装 LibreOffice 后可尝试 ppt。只分析布局、色彩和母版结构，不复用文字与图片内容。</span>
                       <input ref={pptTemplateInputRef} type="file" accept=".ppt,.pptx" multiple />
-                      <button type="submit"><UploadCloud size={16} />上传模板</button>
+                      <button type="submit"><UploadCloud size={16} />上传参考 PPT</button>
                     </form>
                     <div className="ppt-option-grid">
                       <label>视觉预设
@@ -626,9 +627,10 @@ function App() {
                           ))}
                         </select>
                       </label>
-                      <label>参考 PPT 模板
+                      <label>参考 PPT 设计
                         <select value={pptTemplate} onChange={(event) => setPptTemplate(event.target.value)}>
-                          <option value="">使用默认模板</option>
+                          <option value="">使用默认设计</option>
+                          {(pptState.templates || []).length > 1 && <option value="__all__">使用全部参考 PPT</option>}
                           {(pptState.templates || []).map((item) => (
                             <option key={item.path} value={item.path}>{item.name}</option>
                           ))}
