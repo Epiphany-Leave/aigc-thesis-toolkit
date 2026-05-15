@@ -232,6 +232,44 @@ output/ppt/outline.md    # PPT 大纲
 output/ppt/preview.md    # 每页要点、图解建议和讲稿提示
 ```
 
+PPT 图解 skill 是可选的运行时扩展。开启后，`workflow.py ppt` 会把每页的
+`visual_type`、`visual`、`diagram`、`bullets` 作为 JSON 传给外部命令；
+外部命令可以返回图片路径，也可以返回 PPT 形状元素。没有配置、调用失败或
+返回内容不可用时，会自动使用内置图解渲染。
+
+```yaml
+ppt:
+  visual_skill:
+    enabled: true
+    command: ""
+    timeout_seconds: 180
+```
+
+`command` 留空时，会自动使用当前 Python 解释器运行
+`workflows/ppt/visual_skill_runner.py`。这个 runner 会复用现有
+`engines.generation.providers.writer` 的 `api_base`、`api_key`、`model`
+配置，也可以在 `ppt.visual_skill` 下单独覆盖：
+
+```yaml
+ppt:
+  visual_skill:
+    enabled: true
+    command: ""
+    model: "gpt-4o-mini"
+```
+
+skill 命令协议：从 stdin 读取 `ppt_visual_skill/v1` JSON，从 stdout 返回：
+
+```json
+{"type": "image", "path": "output/ppt/visuals/slide_03.png"}
+```
+
+或：
+
+```json
+{"type": "ppt_shapes", "elements": [{"type": "box", "x": 0.4, "y": 0.5, "w": 2.2, "h": 0.4, "text": "控制层"}]}
+```
+
 ### 6. 推荐测试顺序
 
 第一次完整测试建议按这个顺序：

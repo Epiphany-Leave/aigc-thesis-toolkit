@@ -68,6 +68,20 @@ export_docx:
   # 先关闭 Markdown 自动锚点链接，避免 Word 中引用跳转全部落到文档首行。
   enable_cross_reference_links: false
 
+ppt:
+  visual_skill:
+    # Enable this to let the PPT workflow call an external visual skill for
+    # each slide. The command receives JSON on stdin and returns JSON on stdout.
+    enabled: true
+    # Leave command empty to use workflows/ppt/visual_skill_runner.py with the
+    # current Python interpreter and the existing writer API configuration.
+    # Example explicit command:
+    # command: ".venv/bin/python workflows/ppt/visual_skill_runner.py"
+    # Optional: override api_base/api_key/model here; otherwise it reuses
+    # engines.generation.providers.writer and its environment variables.
+    command: ""
+    timeout_seconds: 180
+
 review:
   input_markdown: output/thesis.md
   prompt: workflows/review/review_prompt.md

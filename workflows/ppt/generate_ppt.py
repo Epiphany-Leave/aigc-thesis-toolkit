@@ -13,8 +13,10 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import urllib.error
 import urllib.request
@@ -40,6 +42,7 @@ PPT_DIR = WORK / "output" / "ppt"
 PPT_PLAN = PPT_DIR / "plan.json"
 PPT_OUTLINE = PPT_DIR / "outline.md"
 PPT_PREVIEW = PPT_DIR / "preview.md"
+PPT_VISUAL_DIR = PPT_DIR / "visuals"
 PROMPT_FILE = WORK / "workflows" / "ppt" / "ppt_prompt.md"
 MAX_SOURCE_CHARS = 90000
 MAX_SLIDES = 16
@@ -121,6 +124,20 @@ def api_config(config: dict) -> tuple[str, str, str, int, float]:
     timeout = int(generation.get("batch", {}).get("request_timeout_seconds", 600))
     temperature = float(generation.get("ppt_temperature", 0.45))
     return base, key, model, timeout, temperature
+
+
+def visual_skill_config(config: dict) -> tuple[bool, list[str], int]:
+    ppt_config = config.get("ppt", {}).get("visual_skill", {})
+    command = ppt_config.get("command") or os.environ.get("PPT_VISUAL_SKILL_COMMAND", "")
+    enabled = bool(ppt_config.get("enabled", bool(command)))
+    timeout = int(ppt_config.get("timeout_seconds", 180))
+    if isinstance(command, list):
+        command_parts = [str(item) for item in command if str(item).strip()]
+    else:
+        command_parts = shlex.split(str(command), posix=os.name != "nt")
+    if enabled and not command_parts:
+        command_parts = [sys.executable, str(WORK / "workflows" / "ppt" / "visual_skill_runner.py")]
+    return enabled and bool(command_parts), command_parts, timeout
 
 
 def chat_completion(base: str, key: str, model: str, messages: list[dict], timeout: int, temperature: float) -> str:
@@ -560,6 +577,22 @@ def set_shape(shape, fill: RGBColor, line: RGBColor | None = None, width: int = 
     shape.line.width = Pt(width)
 
 
+def rgb_to_hex(color: RGBColor) -> str:
+    return f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}"
+
+
+def hex_to_rgb(value: str | None, fallback: RGBColor) -> RGBColor:
+    if not value:
+        return fallback
+    value = value.strip().lstrip("#")
+    if len(value) != 6:
+        return fallback
+    try:
+        return RGBColor(int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16))
+    except ValueError:
+        return fallback
+
+
 def add_textbox(slide, left, top, width, height, text, size=24, color=None, bold=False, align=None):
     box = slide.shapes.add_textbox(left, top, width, height)
     frame = box.text_frame
@@ -665,7 +698,127 @@ def add_summary_visual(slide, item: dict, theme) -> None:
         add_node(slide, 1.0 + idx * 2.95, 2.85, 2.15, 0.82, label, theme, "panel2", "text", 13)
 
 
-def add_visual(slide, item: dict, theme, style: str) -> None:
+def visual_skill_payload(item: dict, index: int, total: int, style: str, theme: dict) -> dict:
+    return {
+        "contract": "ppt_visual_skill/v1",
+        "index": index,
+        "total": total,
+        "style": style,
+        "slide": item,
+        "canvas": {"width_in": 3.05, "height_in": 3.55},
+        "theme": {key: rgb_to_hex(value) for key, value in theme.items()},
+        "output_dir": str(PPT_VISUAL_DIR),
+    }
+
+
+def run_visual_skill(item: dict, index: int, total: int, style: str, theme: dict, config: dict) -> dict | None:
+    enabled, command, timeout = visual_skill_config(config)
+    if not enabled:
+        return None
+    PPT_VISUAL_DIR.mkdir(parents=True, exist_ok=True)
+    payload = visual_skill_payload(item, index, total, style, theme)
+    try:
+        result = subprocess.run(
+            command,
+            input=json.dumps(payload, ensure_ascii=False),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            cwd=str(WORK),
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print(f"PPT WARN: visual skill unavailable, using built-in visual. {exc}")
+        return None
+    if result.returncode != 0:
+        stderr = clean_text(result.stderr)[-240:]
+        print(f"PPT WARN: visual skill failed, using built-in visual. {stderr}")
+        return None
+    try:
+        spec = parse_json_object(result.stdout)
+    except json.JSONDecodeError as exc:
+        print(f"PPT WARN: visual skill returned invalid JSON, using built-in visual. {exc}")
+        return None
+    return spec if isinstance(spec, dict) else None
+
+
+def resolve_skill_path(path: str) -> Path:
+    candidate = Path(path)
+    return candidate if candidate.is_absolute() else WORK / candidate
+
+
+def add_skill_image(slide, spec: dict, left: float, top: float, width: float, height: float) -> bool:
+    image_path = spec.get("path") or spec.get("image") or spec.get("file")
+    if not image_path:
+        return False
+    path = resolve_skill_path(str(image_path))
+    if not path.exists():
+        print(f"PPT WARN: visual skill image not found: {path}")
+        return False
+    try:
+        slide.shapes.add_picture(str(path), Inches(left), Inches(top), width=Inches(width), height=Inches(height))
+        return True
+    except Exception as exc:
+        print(f"PPT WARN: unable to insert visual skill image, using built-in visual. {exc}")
+        return False
+
+
+def add_skill_elements(slide, spec: dict, theme, left: float, top: float, width: float, height: float) -> bool:
+    elements = spec.get("elements")
+    if not isinstance(elements, list) or not elements:
+        return False
+    for element in elements[:24]:
+        if not isinstance(element, dict):
+            continue
+        kind = str(element.get("type") or "box")
+        x = left + float(element.get("x", 0))
+        y = top + float(element.get("y", 0))
+        w = max(0.05, float(element.get("w", element.get("width", 1))))
+        h = max(0.05, float(element.get("h", element.get("height", 0.35))))
+        text = clean_text(str(element.get("text", "")))
+        fill = hex_to_rgb(str(element.get("fill", "")), theme["panel2"])
+        line = hex_to_rgb(str(element.get("line", "")), theme["accent"])
+        color = hex_to_rgb(str(element.get("color", "")), theme["text"])
+        if kind == "image":
+            add_skill_image(slide, element, x, y, w, h)
+        elif kind == "text":
+            add_textbox(slide, Inches(x), Inches(y), Inches(w), Inches(h), text, int(element.get("size", 11)), color, bool(element.get("bold", False)), PP_ALIGN.CENTER if element.get("align") == "center" else None)
+        elif kind == "arrow":
+            add_arrow(slide, x, y, left + float(element.get("x2", element.get("to_x", 0))), top + float(element.get("y2", element.get("to_y", 0))), theme)
+        elif kind == "bar":
+            shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(h))
+            set_shape(shape, fill, line, int(element.get("line_width", 1)))
+        else:
+            shape_type = MSO_SHAPE.OVAL if kind in {"circle", "oval"} else MSO_SHAPE.ROUNDED_RECTANGLE
+            shape = slide.shapes.add_shape(shape_type, Inches(x), Inches(y), Inches(w), Inches(h))
+            set_shape(shape, fill, line, int(element.get("line_width", 1)))
+            if text:
+                add_textbox(slide, Inches(x + 0.04), Inches(y + 0.06), Inches(max(0.05, w - 0.08)), Inches(max(0.05, h - 0.1)), text, int(element.get("size", 10)), color, bool(element.get("bold", True)), PP_ALIGN.CENTER)
+    return True
+
+
+def add_skill_visual(slide, item: dict, theme, style: str, config: dict, index: int, total: int) -> bool:
+    spec = run_visual_skill(item, index, total, style, theme, config)
+    if not spec:
+        return False
+    left, top, width, height = 6.35, 1.45, 3.05, 3.45
+    if str(spec.get("type", "")).lower() == "image" and add_skill_image(slide, spec, left, top, width, height):
+        return True
+    if add_skill_elements(slide, spec, theme, left, top, width, height):
+        return True
+    if add_skill_image(slide, spec, left, top, width, height):
+        return True
+    print("PPT WARN: visual skill output had no usable image/elements, using built-in visual.")
+    return False
+
+
+def add_visual(slide, item: dict, theme, style: str, config: dict, index: int, total: int) -> None:
+    if add_skill_visual(slide, item, theme, style, config, index, total):
+        add_textbox(slide, Inches(6.45), Inches(4.78), Inches(2.85), Inches(0.35), item.get("visual", ""), 9, theme["muted"], False, PP_ALIGN.CENTER)
+        return
     visual_type = (item.get("visual_type") or "").lower()
     if "arch" in visual_type or "架构" in visual_type or item.get("kind") == "architecture" or style == "architecture":
         add_architecture_visual(slide, item, theme)
@@ -678,7 +831,8 @@ def add_visual(slide, item: dict, theme, style: str) -> None:
     add_textbox(slide, Inches(6.45), Inches(4.78), Inches(2.85), Inches(0.35), item.get("visual", ""), 9, theme["muted"], False, PP_ALIGN.CENTER)
 
 
-def build_presentation(plan: dict, style: str, template_path: Path | None = None) -> Presentation:
+def build_presentation(plan: dict, style: str, template_path: Path | None = None, config: dict | None = None) -> Presentation:
+    config = config or {}
     theme = THEMES.get(style, THEMES["infographic"])
     slides = normalize_slides(plan.get("slides", []))
     prs = blank_presentation(template_path)
@@ -701,13 +855,15 @@ def build_presentation(plan: dict, style: str, template_path: Path | None = None
         add_header(slide, item["title"], theme, index, total)
         if kind == "agenda" or layout == "agenda":
             add_bullets(slide, item.get("bullets", []), theme, left=1.1, top=1.45, width=4.7, height=3.2, size=18)
-            add_process_visual(slide, item, theme)
+            if not add_skill_visual(slide, item, theme, style, config, index, total):
+                add_process_visual(slide, item, theme)
         elif kind == "summary" or layout == "summary":
-            add_bullets(slide, item.get("bullets", []), theme, left=1.0, top=1.45, width=8.0, height=1.1, size=17)
-            add_summary_visual(slide, item, theme)
+            add_bullets(slide, item.get("bullets", []), theme, left=1.0, top=1.45, width=5.2, height=1.1, size=17)
+            if not add_skill_visual(slide, item, theme, style, config, index, total):
+                add_summary_visual(slide, item, theme)
         else:
             add_bullets(slide, item.get("bullets", []), theme)
-            add_visual(slide, item, theme, style)
+            add_visual(slide, item, theme, style, config, index, total)
         add_callout(slide, item.get("callout", ""), theme)
     return prs
 
@@ -731,7 +887,7 @@ def main() -> int:
         plan = normalize_plan(plan)
     write_artifacts(plan)
     template_path = Path(args.template) if args.template else None
-    prs = build_presentation(plan, args.style, template_path=template_path)
+    prs = build_presentation(plan, args.style, template_path=template_path, config=config)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     prs.save(output)
