@@ -448,6 +448,8 @@ python workflow.py ui --port 8766         # 指定 WebUI 端口
 python workflow.py doctor                 # 检查 Python/Node/LibreOffice/OCR/Pandoc 等依赖
 ```
 
+使用 `--render-mode image_slide` 或 WebUI 中的“整页 AI 图片”模式时，必须在“配置中心 -> PPT 图像 API”配置可用的图片生成接口。该模式失败时会直接报错，不会自动退回普通可编辑 PPT，避免误以为已经生成 AI 图片版。
+
 ## 输出文件
 
 最终结果：

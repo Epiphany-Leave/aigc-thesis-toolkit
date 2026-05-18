@@ -721,6 +721,21 @@ def run_ppt_command(style="infographic", source="", template="", render_mode="ed
     render_mode = render_mode if render_mode in {"editable", "image_slide"} else "editable"
     command = [sys.executable, "workflow.py", "ppt", "--style", style]
     command.extend(["--render-mode", render_mode])
+    if OUTPUT_PPTX.exists():
+        OUTPUT_PPTX.unlink()
+    if render_mode == "image_slide":
+        config = load_config()
+        image_config = config.get("ppt", {}).get("image_slide", {})
+        writer = config.get("engines", {}).get("generation", {}).get("providers", {}).get("writer", {})
+        image_key = (
+            image_config.get("api_key")
+            or os.environ.get(image_config.get("api_key_env", "PPT_IMAGE_API_KEY"), "")
+            or os.environ.get("OPENAI_IMAGE_API_KEY", "")
+            or writer.get("api_key")
+            or os.environ.get(writer.get("api_key_env", "OPENAI_API_KEY"), "")
+        )
+        if not image_key:
+            return False, "整页 AI 图片模式需要配置 PPT 图像 API Key。请在配置中心填写 PPT 图像 API，或切回可编辑 PPT 元素。"
     if source:
         source_path = (WORK / source).resolve()
         try:

@@ -1339,8 +1339,10 @@ def main() -> int:
     if args.render_mode == "image_slide":
         prs = build_image_slide_presentation(plan, args.style, reference_paths=reference_paths, config=config, reference_style=reference_style, image_model=args.image_model)
         if prs is None:
-            print("PPT WARN: image_slide mode failed, falling back to editable PPT rendering.")
-            prs = build_presentation(plan, args.style, reference_paths=reference_paths, config=config, reference_style=reference_style)
+            raise SystemExit(
+                "ERROR: image_slide mode failed. No editable fallback was generated. "
+                "Configure PPT 图像 API in WebUI, or switch PPT 渲染模式 to 可编辑 PPT 元素."
+            )
     else:
         prs = build_presentation(plan, args.style, reference_paths=reference_paths, config=config, reference_style=reference_style)
     output = Path(args.output)
