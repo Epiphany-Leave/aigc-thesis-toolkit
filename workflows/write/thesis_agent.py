@@ -321,6 +321,11 @@ def cmd_assemble():
         print(f"WARN: word count is below configured minimum {MIN_WORD_COUNT}. Consider regenerating short chapters.")
     if TARGET_WORD_COUNT and word_count > int(TARGET_WORD_COUNT * 1.15):
         print(f"WARN: word count is above configured target {TARGET_WORD_COUNT}. Consider lowering section targets and regenerating long chapters.")
+    if TARGET_WORD_COUNT and word_count > int(TARGET_WORD_COUNT * 1.07):
+        raise SystemExit(
+            f"ERROR: word count {word_count} exceeds target {TARGET_WORD_COUNT} by more than 7%. "
+            "Run python workflow.py plan --overwrite-state, then regenerate with python workflow.py generate --all --overwrite."
+        )
 
 
 def main():

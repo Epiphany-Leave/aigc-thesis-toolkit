@@ -142,7 +142,7 @@ def build_prompt(config, section, existing_tail):
     thesis_target = int(assembly.get("target_word_count") or assembly.get("min_word_count") or 25000)
     target_words = int(section.get("target_word_count") or (3500 if is_chapter_unit else 900))
     min_words = int(section.get("min_word_count") or max(300, target_words * 0.85))
-    max_words = int(section.get("max_word_count") or max(min_words + 100, target_words * 1.15))
+    max_words = int(section.get("max_word_count") or max(min_words + 100, target_words * 1.07))
     subsection_lines = "\n".join(f"- {title}" for title in subsections) if subsections else "（无）"
     heading_rule = (
         "当前写作单元是完整章节：主标题必须用 # 章节标题，章内小节用 ##，小节下的条目用 ###，必须覆盖下方小节清单。"
@@ -223,6 +223,56 @@ def build_prompt(config, section, existing_tail):
     ]
 
 
+def section_word_bounds(section):
+    target_words = int(section.get("target_word_count") or 1000)
+    min_words = int(section.get("min_word_count") or max(250, target_words * 0.88))
+    max_words = int(section.get("max_word_count") or max(min_words + 80, target_words * 1.07))
+    return target_words, min_words, max_words
+
+
+def enforce_section_length(base, key, model, config, section, content, timeout):
+    target_words, min_words, max_words = section_word_bounds(section)
+    word_count = count_cjk_words(content)
+    if word_count <= max_words:
+        return content, word_count, False
+    title = section.get("subsection_title") or section.get("chapter_title") or section.get("title", "")
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "你是论文压缩改写助手。只输出改写后的 Markdown 正文。"
+                "必须保留原有标题层级、公式编号、图表占位、参考文献引用和核心技术事实。"
+                "删除重复解释、空泛背景、过多列表和冗余过渡句，不新增事实。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"""下面这个论文写作单元明显超出字数预算，请压缩改写。
+
+标题：{title}
+当前估算字数：{word_count}
+目标字数：约 {target_words}
+允许范围：{min_words}～{max_words}
+
+要求：
+1. 改写后必须不超过 {max_words} 字，尽量接近 {target_words} 字。
+2. 不要删除必要的公式说明、图表题注和关键实验/设计结论。
+3. 不要输出解释过程，不要使用代码块包裹。
+
+原文：
+{content}
+""",
+        },
+    ]
+    revised = chat_completion(base, key, model, messages, temperature=0.15, timeout=timeout)
+    revised_count = count_cjk_words(revised)
+    if revised_count > max_words:
+        print(f"WARN: compressed section still above max words: {revised_count}/{max_words}")
+    else:
+        print(f"OK: compressed section word count {word_count} -> {revised_count}")
+    return revised, revised_count, True
+
+
 def plan_path(config):
     return WORK / config.get("assembly", {}).get("plan_file", "thesis/section_plan.json")
 
@@ -298,7 +348,11 @@ def main():
     base, key, model = api_config(config)
     thesis_dir = WORK / config.get("paths", {}).get("thesis_dir", "thesis")
     plan = load_plan(config)
-    targets = apply_batch_limit(next_sections(plan, all_sections=args.all, only=args.only), config, args.max_sections)
+    if args.all and args.overwrite:
+        targets = plan.get("sections", [])
+    else:
+        targets = next_sections(plan, all_sections=args.all, only=args.only)
+    targets = apply_batch_limit(targets, config, args.max_sections)
     if not targets:
         print("OK: no pending sections")
         return 0
@@ -324,13 +378,15 @@ def main():
         update_state(config, section["id"], section["file"], "in_progress")
         messages = build_prompt(config, section, existing_tail)
         content = chat_completion(base, key, model, messages, timeout=timeout)
+        content, word_count, compressed = enforce_section_length(base, key, model, config, section, content, timeout)
         path.write_text(content.strip() + "\n", encoding="utf-8")
         write_generation_log(config, section, content)
         update_plan_status(config, section["id"], "done")
         update_state(config, section["id"], section["file"], "done")
         max_tail = int(batch.get("max_context_tail_chars", 8000) or 8000)
         existing_tail = content[-max_tail:]
-        print(f"OK: generated {path}")
+        suffix = " after compression" if compressed else ""
+        print(f"OK: generated {path} ({word_count} words{suffix})")
         if sleep_seconds:
             time.sleep(sleep_seconds)
 

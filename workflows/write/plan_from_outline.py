@@ -237,13 +237,16 @@ def make_plan(thesis_dir, chapters, existing_plan, existing_state, granularity="
 def assign_word_targets(plan, config):
     assembly = config.get("assembly", {})
     target = int(assembly.get("target_word_count") or assembly.get("min_word_count") or 25000)
-    writable = [item for item in plan if not is_abstract(item.get("chapter_title") or item.get("title", ""))]
+    budget = max(1000, int(target * 0.94))
+    writable = list(plan)
     if not writable:
         return plan
     weights = []
     for item in writable:
         title = item.get("chapter_title") or item.get("title", "")
-        if "绪论" in title or "总结" in title or "展望" in title:
+        if is_abstract(title):
+            weights.append(0.28)
+        elif "绪论" in title or "总结" in title or "展望" in title:
             weights.append(0.75)
         elif item.get("generation_granularity") == "subsection":
             weights.append(0.65)
@@ -252,20 +255,15 @@ def assign_word_targets(plan, config):
     total_weight = sum(weights) or 1
     assigned = 0
     for item, weight in zip(writable, weights):
-        words = max(500, round(target * weight / total_weight / 100) * 100)
+        words = max(350, round(budget * weight / total_weight / 100) * 100)
         item["target_word_count"] = int(words)
-        item["min_word_count"] = max(300, int(words * 0.85))
-        item["max_word_count"] = int(words * 1.15)
+        item["min_word_count"] = max(250, int(words * 0.88))
+        item["max_word_count"] = int(words * 1.07)
         assigned += item["target_word_count"]
     if writable:
-        writable[-1]["target_word_count"] = max(500, writable[-1]["target_word_count"] + target - assigned)
-        writable[-1]["min_word_count"] = max(300, int(writable[-1]["target_word_count"] * 0.85))
-        writable[-1]["max_word_count"] = int(writable[-1]["target_word_count"] * 1.15)
-    for item in plan:
-        if is_abstract(item.get("chapter_title") or item.get("title", "")):
-            item["target_word_count"] = min(1200, max(600, int(target * 0.04)))
-            item["min_word_count"] = 400
-            item["max_word_count"] = 1500
+        writable[-1]["target_word_count"] = max(350, writable[-1]["target_word_count"] + budget - assigned)
+        writable[-1]["min_word_count"] = max(250, int(writable[-1]["target_word_count"] * 0.88))
+        writable[-1]["max_word_count"] = int(writable[-1]["target_word_count"] * 1.07)
     return plan
 
 

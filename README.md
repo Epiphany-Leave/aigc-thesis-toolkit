@@ -391,6 +391,8 @@ references:
 - `request_timeout_seconds` 是单次 API 请求超时时间。
 - `assembly.target_word_count` 是全文目标字数；生成计划会把它分配到各章/小节，正文生成会按单元字数范围控制。
 - `references.cn_count` 和 `references.en_count` 分别控制中文、英文参考文献数量。
+- 如果已生成过正文后再修改目标字数，需要重新生成计划和正文：`python workflow.py plan --overwrite-state`，然后运行 `python workflow.py generate --all --overwrite`。
+- 构建 Word 前会检查全文字数；如果超过目标字数 7%，会停止导出，避免生成明显超标的 `thesis.docx`。
 
 ## 命令行用法
 
