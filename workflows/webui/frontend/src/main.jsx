@@ -791,7 +791,24 @@ function ConfigDrawer({ settings, setSettings, onClose, onSave }) {
         </div>
 
         <div className="drawer-section">
-          <h3>质量优先参数</h3>
+          <h3>生成参数设置</h3>
+          <label>论文字数
+            <input type="number" min="8000" max="80000" step="500" value={draft.target_word_count ?? 25000} onChange={(event) => setField("target_word_count", event.target.value)} />
+          </label>
+          <div className="preset-row">
+            {[8000, 15000, 25000].map((value) => (
+              <button type="button" className={Number(draft.target_word_count ?? 25000) === value ? "preset active" : "preset"} onClick={() => setField("target_word_count", value)} key={value}>{value}字</button>
+            ))}
+          </div>
+          <div className="reference-grid">
+            <label>中文参考文献 <span>{draft.reference_cn_count ?? 10} 篇</span>
+              <input type="range" min="0" max="50" value={draft.reference_cn_count ?? 10} onChange={(event) => setField("reference_cn_count", Number(event.target.value))} />
+            </label>
+            <label>英文参考文献 <span>{draft.reference_en_count ?? 10} 篇</span>
+              <input type="range" min="0" max="50" value={draft.reference_en_count ?? 10} onChange={(event) => setField("reference_en_count", Number(event.target.value))} />
+            </label>
+          </div>
+          <p className="drawer-note">参考文献只采用 BibTeX、资料中真实提取的文献，或带作者/期刊/DOI 的 Crossref 条目；中文文献不足时不会凭空编造。</p>
           <label>生成粒度
             <select value={draft.granularity || "chapter"} onChange={(event) => setField("granularity", event.target.value)}>
               <option value="chapter">按章高质量生成</option>

@@ -16,7 +16,14 @@ engines:
       max_context_tail_chars: 8000
 
 assembly:
+  target_word_count: 25000
   min_word_count: 25000
+
+references:
+  cn_count: 10
+  en_count: 10
+  max_items: 20
+  source_policy: "google_scholar_or_cnki_queryable"
 
 ppt:
   image_slide:

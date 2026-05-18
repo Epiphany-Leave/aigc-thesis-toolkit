@@ -43,6 +43,7 @@ STATE_FILE = BASE / "state.json"
 PLAN_FILE = WORK / ASSEMBLY.get("plan_file", "thesis/section_plan.json")
 THESIS_FILE = WORK / ASSEMBLY.get("output_markdown", "output/thesis.md")
 MIN_WORD_COUNT = int(ASSEMBLY.get("min_word_count", 25000) or 25000)
+TARGET_WORD_COUNT = int(ASSEMBLY.get("target_word_count", MIN_WORD_COUNT) or MIN_WORD_COUNT)
 REFERENCES_FILE = WORK / CONFIG.get("references", {}).get("output_markdown", "thesis/references.md")
 ACKNOWLEDGEMENT_FILE = BASE / "acknowledgement.md"
 
@@ -318,6 +319,8 @@ def cmd_assemble():
     print(f"Word count estimate: {word_count}")
     if MIN_WORD_COUNT and word_count < MIN_WORD_COUNT:
         print(f"WARN: word count is below configured minimum {MIN_WORD_COUNT}. Consider regenerating short chapters.")
+    if TARGET_WORD_COUNT and word_count > int(TARGET_WORD_COUNT * 1.15):
+        print(f"WARN: word count is above configured target {TARGET_WORD_COUNT}. Consider lowering section targets and regenerating long chapters.")
 
 
 def main():

@@ -257,6 +257,11 @@ def load_settings():
     provider = generation.get("providers", {}).get("writer", {})
     batch = generation.get("batch", {})
     image_slide = config.get("ppt", {}).get("image_slide", {})
+    assembly = config.get("assembly", {})
+    references = config.get("references", {})
+    target_word_count = int(assembly.get("target_word_count") or assembly.get("min_word_count") or 25000)
+    cn_refs = int(references.get("cn_count") or 10)
+    en_refs = int(references.get("en_count") or 10)
     return {
         "title": config.get("project", {}).get("title", ""),
         "api_base": provider.get("api_base", ""),
@@ -270,6 +275,9 @@ def load_settings():
         "sleep_seconds": batch.get("sleep_seconds", 3),
         "request_timeout_seconds": batch.get("request_timeout_seconds", 300),
         "max_sections_per_run": batch.get("max_sections_per_run", 0),
+        "target_word_count": target_word_count,
+        "reference_cn_count": cn_refs,
+        "reference_en_count": en_refs,
     }
 
 
@@ -281,6 +289,8 @@ def update_settings(values):
     provider = providers.setdefault("writer", {})
     batch = generation.setdefault("batch", {})
     image_slide = config.setdefault("ppt", {}).setdefault("image_slide", {})
+    assembly = config.setdefault("assembly", {})
+    references = config.setdefault("references", {})
 
     project["title"] = values.get("title", [""])[0].strip()
     provider["api_base"] = values.get("api_base", [""])[0].strip()
@@ -295,6 +305,15 @@ def update_settings(values):
     batch["sleep_seconds"] = as_number(values.get("sleep_seconds", ["3"])[0], float, 3)
     batch["request_timeout_seconds"] = as_number(values.get("request_timeout_seconds", ["300"])[0], int, 300)
     batch["max_sections_per_run"] = as_number(values.get("max_sections_per_run", ["0"])[0], int, 0)
+    target_words = clamp_int(as_number(values.get("target_word_count", ["25000"])[0], int, 25000), 8000, 80000)
+    cn_refs = clamp_int(as_number(values.get("reference_cn_count", ["10"])[0], int, 10), 0, 80)
+    en_refs = clamp_int(as_number(values.get("reference_en_count", ["10"])[0], int, 10), 0, 80)
+    assembly["target_word_count"] = target_words
+    assembly["min_word_count"] = min(target_words, max(1, int(target_words * 0.92)))
+    references["cn_count"] = cn_refs
+    references["en_count"] = en_refs
+    references["max_items"] = cn_refs + en_refs
+    references["source_policy"] = "google_scholar_or_cnki_queryable"
     save_local_config(config)
 
 
@@ -306,6 +325,8 @@ def update_settings_json(values):
     provider = providers.setdefault("writer", {})
     batch = generation.setdefault("batch", {})
     image_slide = config.setdefault("ppt", {}).setdefault("image_slide", {})
+    assembly = config.setdefault("assembly", {})
+    references = config.setdefault("references", {})
 
     project["title"] = str(values.get("title", "")).strip()
     provider["api_base"] = str(values.get("api_base", "")).strip()
@@ -320,6 +341,15 @@ def update_settings_json(values):
     batch["sleep_seconds"] = as_number(values.get("sleep_seconds", 3), float, 3)
     batch["request_timeout_seconds"] = as_number(values.get("request_timeout_seconds", 300), int, 300)
     batch["max_sections_per_run"] = as_number(values.get("max_sections_per_run", 0), int, 0)
+    target_words = clamp_int(as_number(values.get("target_word_count", 25000), int, 25000), 8000, 80000)
+    cn_refs = clamp_int(as_number(values.get("reference_cn_count", 10), int, 10), 0, 80)
+    en_refs = clamp_int(as_number(values.get("reference_en_count", 10), int, 10), 0, 80)
+    assembly["target_word_count"] = target_words
+    assembly["min_word_count"] = min(target_words, max(1, int(target_words * 0.92)))
+    references["cn_count"] = cn_refs
+    references["en_count"] = en_refs
+    references["max_items"] = cn_refs + en_refs
+    references["source_policy"] = "google_scholar_or_cnki_queryable"
     save_local_config(config)
 
 
@@ -328,6 +358,10 @@ def as_number(value, caster, default):
         return caster(value)
     except (TypeError, ValueError):
         return default
+
+
+def clamp_int(value, minimum, maximum):
+    return max(minimum, min(maximum, int(value)))
 
 
 def update_style(values):

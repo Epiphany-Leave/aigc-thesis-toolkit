@@ -743,6 +743,45 @@ label {
   gap: 10px;
 }
 
+.preset-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+button.preset {
+  border-radius: 8px;
+  padding: 9px 10px;
+  color: #3d5772;
+  background: #eef4fb;
+  box-shadow: none;
+}
+
+button.preset.active {
+  border-color: #8be4ff;
+  color: #008fd1;
+  background: #e7fbff;
+}
+
+.reference-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.reference-grid label span {
+  justify-self: end;
+  padding: 5px 10px;
+  border-radius: 8px;
+  color: #009de0;
+  background: #eef6ff;
+}
+
+.reference-grid input[type="range"] {
+  padding: 0;
+  accent-color: #00aeea;
+}
+
 .drawer-save {
   width: 100%;
   border-radius: 8px;
@@ -773,5 +812,5 @@ label {
   .download-grid { grid-template-columns: 1fr; }
   .ppt-workspace, .ppt-option-grid, .ppt-slide-list { grid-template-columns: 1fr; }
   .reader { min-height: 420px; padding: 16px; }
-  .drawer-grid { grid-template-columns: 1fr; }
+  .drawer-grid, .reference-grid { grid-template-columns: 1fr; }
 }

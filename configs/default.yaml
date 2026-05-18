@@ -48,6 +48,7 @@ paths:
 
 assembly:
   output_markdown: output/thesis.md
+  target_word_count: 25000
   min_word_count: 25000
   # auto 表示从 thesis/section_plan.json 读取章节顺序。
   # section_plan.json 由 thesis/outline.md 自动生成。
@@ -58,7 +59,10 @@ references:
   output_bibtex: user_data/references.bib
   output_markdown: thesis/references.md
   auto_query: true
+  cn_count: 10
+  en_count: 10
   max_items: 12
+  source_policy: "google_scholar_or_cnki_queryable"
 
 export_docx:
   input_markdown: output/thesis.md

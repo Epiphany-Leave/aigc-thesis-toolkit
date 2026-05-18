@@ -391,10 +391,50 @@ def build_references_markdown(entries):
     return "\n".join(lines).strip() + "\n"
 
 
+def entry_language(entry):
+    fields = entry.get("fields", {})
+    text = " ".join(clean_text(fields.get(key)) for key in ("title", "journal", "booktitle", "note"))
+    return "cn" if re.search(r"[\u4e00-\u9fff]", text) else "en"
+
+
+def entry_score(entry):
+    fields = entry.get("fields", {})
+    score = 0
+    score += 5 if fields.get("author") else 0
+    score += 4 if fields.get("title") else 0
+    score += 3 if fields.get("journal") or fields.get("journaltitle") or fields.get("booktitle") else 0
+    score += 3 if fields.get("doi") else 0
+    score += 2 if fields.get("year") else 0
+    score += 1 if clean_text(fields.get("note")).startswith("来源：") else 0
+    return score
+
+
+def select_reference_entries(entries, cn_count, en_count):
+    usable = [entry for entry in entries if format_reference_from_fields(entry.get("fields", {}))]
+    cn_entries = sorted([entry for entry in usable if entry_language(entry) == "cn"], key=entry_score, reverse=True)
+    en_entries = sorted([entry for entry in usable if entry_language(entry) != "cn"], key=entry_score, reverse=True)
+    return cn_entries[:cn_count] + en_entries[:en_count]
+
+
+def bibtex_from_entries(entries):
+    blocks = []
+    for index, entry in enumerate(entries, start=1):
+        fields = entry.get("fields", {})
+        key = re.sub(r"[^A-Za-z0-9:_-]+", "", entry.get("key", "")) or f"ref{index:02d}"
+        entry_type = entry.get("type", "misc")
+        lines = []
+        for name in ("author", "title", "journal", "journaltitle", "booktitle", "year", "volume", "number", "pages", "doi", "note"):
+            if fields.get(name):
+                lines.append(f"  {name} = {{{bib_escape(fields[name])}}}")
+        if lines:
+            blocks.append(f"@{entry_type}{{{key},\n" + ",\n".join(lines) + "\n}")
+    return "\n\n".join(blocks)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--overwrite", action="store_true", help="overwrite generated references")
-    parser.add_argument("--rows", type=int, default=12, help="maximum Crossref items")
+    parser.add_argument("--rows", type=int, default=None, help="maximum Crossref items")
     parser.add_argument("--timeout", type=int, default=30, help="Crossref request timeout")
     args = parser.parse_args()
 
@@ -403,6 +443,11 @@ def main():
     thesis_dir = WORK / config.get("paths", {}).get("thesis_dir", "thesis")
     references_md = WORK / config.get("references", {}).get("output_markdown", "thesis/references.md")
     references_bib = WORK / config.get("references", {}).get("output_bibtex", "user_data/references.bib")
+    ref_config = config.get("references", {})
+    cn_count = max(0, int(ref_config.get("cn_count", 10) or 0))
+    en_count = max(0, int(ref_config.get("en_count", 10) or 0))
+    max_items = max(1, int(ref_config.get("max_items") or (cn_count + en_count) or 12))
+    rows = args.rows if args.rows is not None else max(max_items, en_count, 1)
 
     if references_md.exists() and references_bib.exists() and not args.overwrite:
         print(f"SKIP: references exist: {references_md}")
@@ -411,26 +456,39 @@ def main():
     user_data_dir.mkdir(parents=True, exist_ok=True)
     thesis_dir.mkdir(parents=True, exist_ok=True)
     bibtex = find_uploaded_bibtex(user_data_dir)
-    if not bibtex.strip():
-        refs = find_references_in_user_data(user_data_dir)
+    refs = find_references_in_user_data(user_data_dir)
+    pieces = [bibtex.strip()] if bibtex.strip() else []
+    if refs and cn_count:
+        pieces.append(bib_from_reference_lines(refs[:cn_count]))
+
+    existing_entries = parse_bib_entries("\n\n".join(pieces))
+    existing_en = sum(1 for entry in existing_entries if entry_language(entry) != "cn")
+    if en_count and existing_en < en_count:
         items = []
         for term in crossref_query_terms(config, refs):
             try:
                 print(f"CROSSREF: {term}", flush=True)
-                items.extend(crossref_items(term, args.rows, args.timeout))
+                items.extend(crossref_items(term, rows, args.timeout))
             except Exception as exc:  # noqa: BLE001 - best effort reference retrieval.
                 print(f"WARN: Crossref query failed for {term!r}: {exc}")
         generated = [bib_from_crossref_item(item, idx) for idx, item in enumerate(dedupe_items(items), 1)]
-        bibtex = "\n\n".join([item for item in generated if item.strip()][:args.rows])
-        if refs and len(parse_bib_entries(bibtex)) < min(6, len(refs)):
-            bibtex = (bibtex.strip() + "\n\n" + bib_from_reference_lines(refs[: max(0, args.rows - len(parse_bib_entries(bibtex)))] )).strip()
+        pieces.append("\n\n".join([item for item in generated if item.strip()][:rows]))
+
+    bibtex = "\n\n".join(item for item in pieces if item.strip())
 
     if not bibtex.strip():
         bibtex = "@misc{todo_references,\n  title = {TODO: 补充与课题直接相关的真实参考文献},\n  year = {2026}\n}\n"
 
-    references_bib.write_text(bibtex.strip() + "\n", encoding="utf-8")
     entries = parse_bib_entries(bibtex)
-    references_md.write_text(build_references_markdown(entries), encoding="utf-8")
+    selected_entries = select_reference_entries(entries, cn_count, en_count) or entries[:max_items]
+    references_bib.write_text((bibtex_from_entries(selected_entries) or bibtex).strip() + "\n", encoding="utf-8")
+    references_md.write_text(build_references_markdown(selected_entries), encoding="utf-8")
+    actual_cn = sum(1 for entry in selected_entries if entry_language(entry) == "cn")
+    actual_en = sum(1 for entry in selected_entries if entry_language(entry) != "cn")
+    if actual_cn < cn_count:
+        print(f"WARN: only {actual_cn}/{cn_count} Chinese references found from uploaded/user_data sources; not fabricating CNKI records.")
+    if actual_en < en_count:
+        print(f"WARN: only {actual_en}/{en_count} English references found from uploaded/Crossref sources.")
     print(f"OK: references bib -> {references_bib}")
     print(f"OK: references markdown -> {references_md}")
     return 0

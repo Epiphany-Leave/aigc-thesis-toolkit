@@ -138,6 +138,11 @@ def build_prompt(config, section, existing_tail):
     subsections = section.get("subsections") or []
     is_chapter_unit = bool(subsections) or not subsection_title
     unit_name = "完整章节" if is_chapter_unit else "论文小节"
+    assembly = config.get("assembly", {})
+    thesis_target = int(assembly.get("target_word_count") or assembly.get("min_word_count") or 25000)
+    target_words = int(section.get("target_word_count") or (3500 if is_chapter_unit else 900))
+    min_words = int(section.get("min_word_count") or max(300, target_words * 0.85))
+    max_words = int(section.get("max_word_count") or max(min_words + 100, target_words * 1.15))
     subsection_lines = "\n".join(f"- {title}" for title in subsections) if subsections else "（无）"
     heading_rule = (
         "当前写作单元是完整章节：主标题必须用 # 章节标题，章内小节用 ##，小节下的条目用 ###，必须覆盖下方小节清单。"
@@ -167,6 +172,8 @@ def build_prompt(config, section, existing_tail):
 - 章节内小节清单：
 {subsection_lines}
 - 输出文件：{section['file']}
+- 本单元目标字数：约 {target_words} 字，合理范围 {min_words}～{max_words} 字
+- 全文目标字数：约 {thesis_target} 字
 
 写作规范：
 {style}
@@ -209,7 +216,7 @@ def build_prompt(config, section, existing_tail):
 9. 不要大量使用列表。确需分点时使用中文括号编号，例如“（1）……”“（2）……”，不要使用 Markdown 有序列表“1. ”，编号前不要有空格。
 10. 正文中禁止出现代码块、程序源码或 ``` 围栏。需要说明程序逻辑时改写成论文文字或伪代码描述。
 11. 正文论述研究背景、技术方案、控制方法、测试方法等内容时，应优先使用“可用参考文献”中的编号引用，例如“相关研究表明……[1]”。不要引用不存在的编号。
-12. 总字数目标不低于 25000 字；按章生成时每章应充分展开，避免短小提纲化。
+12. 全文目标字数约 {thesis_target} 字，本单元请控制在 {min_words}～{max_words} 字之间；不要为了扩字数重复表述，也不要短小提纲化。
 13. 不要用代码块包裹整篇输出。
 """,
         },

@@ -20,6 +20,7 @@ AIGC Thesis Toolkit 是一个本地运行的 AI 论文写作工作流。
 - **稳定的导出格式**：公式编号会在导出前从公式体中拆出；插图默认保留位置、题注和说明，不直接插入图片。
 - **导出 Word**：把生成的章节/小节合并成 `output/thesis.md`，再按 `template/reference.docx` 导出 `output/thesis.docx`。
 - **自动生成 PPT**：拥有独立的 PPT 生成页面、prompt、进度和预览；可以根据 `output/thesis.md`，也可以根据外部导入的 `.md/.docx/.pdf/.txt` 论文生成答辩 PPT 初稿，支持导入多个 `.pptx/.ppt` 参考 PPT 设计样本，并支持 `infographic`、`excalidraw`、`architecture` 三种视觉预设。
+- **生成参数可控**：可在 WebUI 配置目标论文字数，以及中文/英文参考文献数量；系统会把字数分配到章节计划中，参考文献不足时只提示补充，不会凭空编造。
 - **适合上传 GitHub**：API Key、个人资料、生成正文、日志和输出文件默认不会提交。
 
 ## 工作流程
@@ -149,6 +150,8 @@ python workflow.py ui
 - API Base
 - API Key
 - 模型名称
+- 目标论文字数
+- 中文/英文参考文献数量
 - 生成粒度：默认“按章高质量生成”
 - 写作单元间隔秒数
 - 请求超时秒数
@@ -192,7 +195,7 @@ thesis/style.md
 - “继续”：取消暂停标记。
 - “自动规范”：扫描资料并生成 `thesis/style.md`。
 - “资料索引”：重新扫描 `user_data/`，生成 `user_data/resources.md`。
-- “参考文献”：优先读取上传的 `.bib`；没有 BibTeX 时会先从开题报告、中期报告等资料的“参考文献”段落提取；仍没有结果时再尝试通过 Crossref 自动检索，生成 `user_data/references.bib` 和 `thesis/references.md`。
+- “参考文献”：按配置的中文/英文数量生成。优先读取上传的 `.bib`；没有 BibTeX 时会先从开题报告、中期报告等资料的“参考文献”段落提取中文文献；英文文献会尝试通过 Crossref/DOI 元数据检索，要求有作者、题名、期刊或 DOI 等可检索信息，生成 `user_data/references.bib` 和 `thesis/references.md`。中文文献不足时只提示补充，不会编造知网条目。
 - “重建大纲”：根据资料和规范重新生成 `thesis/outline.md`。
 - “写作计划”：根据大纲生成 `thesis/section_plan.json`。
 - “构建 Word”：把 Markdown 合并并导出 `output/thesis.docx`。
@@ -367,6 +370,16 @@ engines:
       sleep_seconds: 3
       request_timeout_seconds: 300
       max_context_tail_chars: 8000
+
+assembly:
+  target_word_count: 25000
+  min_word_count: 23000
+
+references:
+  cn_count: 10
+  en_count: 10
+  max_items: 20
+  source_policy: "google_scholar_or_cnki_queryable"
 ```
 
 说明：
@@ -376,6 +389,8 @@ engines:
 - 如果想限制单次最多生成 3 个写作单元，可以设为 `3`。
 - `sleep_seconds` 是两个写作单元请求之间的等待时间。
 - `request_timeout_seconds` 是单次 API 请求超时时间。
+- `assembly.target_word_count` 是全文目标字数；生成计划会把它分配到各章/小节，正文生成会按单元字数范围控制。
+- `references.cn_count` 和 `references.en_count` 分别控制中文、英文参考文献数量。
 
 ## 命令行用法
 
