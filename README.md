@@ -423,6 +423,7 @@ python workflow.py ppt --style architecture # 根据 output/thesis.md 生成 PPT
 python workflow.py ppt --input paper.docx --style infographic
 python workflow.py ppt --input paper.pdf --style excalidraw
 python workflow.py ppt --input paper.md --template reference-a.pptx --template reference-b.pptx
+python workflow.py ppt --render-mode image_slide # 每页由 AI 生成整页图片后铺入 PPT
 python workflow.py ppt --no-ai              # 不调用 API，使用本地提纲模式
 python workflow.py review                 # 按章节/分块审阅论文，并重新构建 Word
 python workflow.py reset --yes            # 清空生成内容和 user_data，开始新论文

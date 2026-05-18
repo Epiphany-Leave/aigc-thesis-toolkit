@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import re
+import base64
 import shlex
 import shutil
 import subprocess
@@ -44,6 +45,7 @@ PPT_PLAN = PPT_DIR / "plan.json"
 PPT_OUTLINE = PPT_DIR / "outline.md"
 PPT_PREVIEW = PPT_DIR / "preview.md"
 PPT_VISUAL_DIR = PPT_DIR / "visuals"
+PPT_SLIDE_IMAGE_DIR = PPT_DIR / "slide_images"
 PPT_REFERENCE_STYLE = PPT_DIR / "reference_style.json"
 PROMPT_FILE = WORK / "workflows" / "ppt" / "ppt_prompt.md"
 MAX_SOURCE_CHARS = 90000
@@ -136,6 +138,32 @@ def api_config(config: dict) -> tuple[str, str, str, int, float]:
     return base, key, model, timeout, temperature
 
 
+def image_api_config(config: dict, image_model: str | None = None) -> tuple[str, str, str, str, int]:
+    base, key, _model, timeout, _temperature = api_config(config)
+    image_config = config.get("ppt", {}).get("image_slide", {})
+    base = (
+        image_config.get("api_base")
+        or os.environ.get(image_config.get("api_base_env", "PPT_IMAGE_API_BASE"))
+        or os.environ.get("OPENAI_IMAGE_BASE_URL")
+        or base
+    ).rstrip("/")
+    key = (
+        image_config.get("api_key")
+        or os.environ.get(image_config.get("api_key_env", "PPT_IMAGE_API_KEY"))
+        or os.environ.get("OPENAI_IMAGE_API_KEY")
+        or key
+    )
+    model = (
+        image_model
+        or image_config.get("model")
+        or os.environ.get("PPT_IMAGE_MODEL")
+        or os.environ.get("OPENAI_IMAGE_MODEL")
+        or "gpt-image-1"
+    )
+    size = image_config.get("size") or os.environ.get("PPT_IMAGE_SIZE") or "1536x1024"
+    return base, key, model, size, int(image_config.get("timeout_seconds", timeout))
+
+
 def visual_skill_config(config: dict) -> tuple[bool, list[str], int]:
     ppt_config = config.get("ppt", {}).get("visual_skill", {})
     command = ppt_config.get("command") or os.environ.get("PPT_VISUAL_SKILL_COMMAND", "")
@@ -177,6 +205,32 @@ def post_chat_completion(base: str, key: str, payload: dict, timeout: int) -> di
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def post_image_generation(base: str, key: str, payload: dict, timeout: int) -> dict:
+    request = urllib.request.Request(
+        f"{base}/images/generations",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def fetch_url_bytes(url: str, timeout: int) -> bytes:
+    request = urllib.request.Request(url, headers={"User-Agent": "ppt-image-slide/1.0"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.read()
+
+
+def http_error_snippet(exc: urllib.error.HTTPError) -> str:
+    try:
+        body = exc.read().decode("utf-8", errors="replace")
+    except Exception:
+        body = ""
+    body = clean_text(body)
+    return body[:220]
 
 
 def read_docx(path: Path) -> str:
@@ -1083,6 +1137,125 @@ def add_visual(slide, item: dict, theme, style: str, config: dict, index: int, t
         add_process_visual(slide, item, theme, area)
 
 
+def reference_style_prompt(reference_style: dict | None) -> str:
+    if not reference_style:
+        return "No external reference deck was provided."
+    palette = ", ".join(reference_style.get("palette") or []) or "use a safe high-contrast academic palette"
+    side = reference_style.get("visual_side") or "right"
+    return (
+        "Reference deck style summary: borrow only visual style, layout rhythm, color tendency, "
+        f"and image/text placement. Never reuse old text or pictures. Palette candidates: {palette}. "
+        f"Typical visual side: {side}."
+    )
+
+
+def slide_image_prompt(item: dict, index: int, total: int, style: str, reference_style: dict | None) -> str:
+    bullets = "\n".join(f"- {bullet}" for bullet in item.get("bullets", [])[:5])
+    diagram = ", ".join(item.get("diagram", [])[:6])
+    return (
+        "Create one complete 16:9 thesis defense PowerPoint slide as a single polished slide image. Keep all important content inside a 16:9 safe area.\n"
+        "The image must include all visible content for this slide: title, key points, diagram, background, shapes, and layout.\n"
+        "Use large readable text, strong contrast, clean spacing, and avoid overlap. Keep Chinese text minimal and legible.\n"
+        "Do not create a poster, landing page, phone UI, mockup frame, watermark, logo, or browser chrome.\n"
+        "Do not invent experimental data, formulas, citations, or chart values not provided here.\n"
+        f"Visual preset: {style}.\n"
+        f"{reference_style_prompt(reference_style)}\n"
+        f"Slide {index}/{total}\n"
+        f"Title: {item.get('title', '')}\n"
+        f"Layout intent: {item.get('layout', 'content_visual')}\n"
+        f"Visual type: {item.get('visual_type', 'process')}\n"
+        f"Callout: {item.get('callout', '')}\n"
+        f"Bullets:\n{bullets}\n"
+        f"Diagram node labels: {diagram}\n"
+        f"Visual instruction: {item.get('visual', '')}\n"
+        "Output should look like a finished academic defense slide, with a restrained professional style."
+    )
+
+
+def decode_image_response(data: dict, timeout: int) -> bytes | None:
+    items = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(items, list) or not items:
+        return None
+    first = items[0]
+    if not isinstance(first, dict):
+        return None
+    b64 = first.get("b64_json") or first.get("base64")
+    if b64:
+        return base64.b64decode(b64)
+    url = first.get("url")
+    if url:
+        return fetch_url_bytes(str(url), timeout)
+    return None
+
+
+def render_slide_image(item: dict, index: int, total: int, style: str, config: dict, reference_style: dict | None, image_model: str | None = None) -> Path | None:
+    base, key, model, size, timeout = image_api_config(config, image_model)
+    if not key:
+        print("PPT WARN: no API key configured for image_slide mode.")
+        return None
+    PPT_SLIDE_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    prompt = slide_image_prompt(item, index, total, style, reference_style)
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "size": size,
+        "n": 1,
+        "response_format": "b64_json",
+    }
+    try:
+        data = post_image_generation(base, key, payload, timeout)
+    except urllib.error.HTTPError as exc:
+        if exc.code in {400, 422}:
+            payload.pop("response_format", None)
+            try:
+                data = post_image_generation(base, key, payload, timeout)
+            except urllib.error.HTTPError as retry_exc:
+                print(f"PPT WARN: image generation API failed for slide {index}: HTTP {retry_exc.code} {http_error_snippet(retry_exc)}")
+                return None
+        else:
+            print(f"PPT WARN: image generation endpoint unavailable for slide {index}: HTTP {exc.code} {http_error_snippet(exc)}")
+            print("PPT WARN: configure ppt.image_slide.api_base/api_key/model or PPT_IMAGE_API_BASE/PPT_IMAGE_API_KEY/PPT_IMAGE_MODEL for image_slide mode.")
+            return None
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        print(f"PPT WARN: image generation request failed for slide {index}: {exc}")
+        return None
+    image_bytes = decode_image_response(data, timeout)
+    if not image_bytes:
+        print(f"PPT WARN: image generation returned no image for slide {index}.")
+        return None
+    path = PPT_SLIDE_IMAGE_DIR / f"slide_{index:02d}.png"
+    path.write_bytes(image_bytes)
+    return path
+
+
+def add_notes(slide, text: str) -> None:
+    if not text:
+        return
+    try:
+        slide.notes_slide.notes_text_frame.text = text
+    except Exception:
+        pass
+
+
+def build_image_slide_presentation(plan: dict, style: str, reference_paths: list[Path] | None = None, config: dict | None = None, reference_style: dict | None = None, image_model: str | None = None) -> Presentation | None:
+    config = config or {}
+    slides = normalize_slides(plan.get("slides", []))
+    prs = blank_presentation(reference_paths)
+    prs.slide_width = Inches(10)
+    prs.slide_height = Inches(5.625)
+    total = max(1, len(slides))
+    print(f"PPT TOTAL: {total}")
+    for index, item in enumerate(slides, start=1):
+        print(f"PPT IMAGE: {index}/{total} {item['title']}", flush=True)
+        image_path = render_slide_image(item, index, total, style, config, reference_style, image_model)
+        if image_path is None:
+            return None
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        slide.shapes.add_picture(str(image_path), 0, 0, width=prs.slide_width, height=prs.slide_height)
+        add_notes(slide, item.get("notes", ""))
+    return prs
+
+
 def build_presentation(plan: dict, style: str, reference_paths: list[Path] | None = None, config: dict | None = None, reference_style: dict | None = None) -> Presentation:
     config = config or {}
     theme = apply_reference_style(THEMES.get(style, THEMES["infographic"]), reference_style)
@@ -1142,6 +1315,8 @@ def main() -> int:
     parser.add_argument("--output", default=str(OUTPUT_PPTX), help="output pptx path")
     parser.add_argument("--style", default="infographic", choices=sorted(THEMES), help="visual style preset")
     parser.add_argument("--template", action="append", help="optional reference PPT design sample: pptx or ppt. Can be used multiple times")
+    parser.add_argument("--render-mode", default="editable", choices=["editable", "image_slide"], help="PPT rendering mode: editable shapes or full-slide AI images")
+    parser.add_argument("--image-model", help="image generation model for --render-mode image_slide")
     parser.add_argument("--no-ai", action="store_true", help="skip AI planning and use local extraction")
     args = parser.parse_args()
 
@@ -1161,7 +1336,13 @@ def main() -> int:
         reference_style = None
         if PPT_REFERENCE_STYLE.exists():
             PPT_REFERENCE_STYLE.unlink()
-    prs = build_presentation(plan, args.style, reference_paths=reference_paths, config=config, reference_style=reference_style)
+    if args.render_mode == "image_slide":
+        prs = build_image_slide_presentation(plan, args.style, reference_paths=reference_paths, config=config, reference_style=reference_style, image_model=args.image_model)
+        if prs is None:
+            print("PPT WARN: image_slide mode failed, falling back to editable PPT rendering.")
+            prs = build_presentation(plan, args.style, reference_paths=reference_paths, config=config, reference_style=reference_style)
+    else:
+        prs = build_presentation(plan, args.style, reference_paths=reference_paths, config=config, reference_style=reference_style)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     prs.save(output)

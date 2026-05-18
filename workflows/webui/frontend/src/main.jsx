@@ -127,6 +127,7 @@ function App() {
   const [pptDragActive, setPptDragActive] = useState(false);
   const [pptTemplateDragActive, setPptTemplateDragActive] = useState(false);
   const [pptStyle, setPptStyle] = useState("infographic");
+  const [pptRenderMode, setPptRenderMode] = useState("editable");
   const [pptSource, setPptSource] = useState("");
   const [pptTemplate, setPptTemplate] = useState("");
   const [configOpen, setConfigOpen] = useState(false);
@@ -247,7 +248,7 @@ function App() {
 
   async function runPptGenerate(source = "") {
     setBusyAction("ppt");
-    const result = await postJson("/api/ppt-generate", { style: pptStyle, source, template: pptTemplate });
+    const result = await postJson("/api/ppt-generate", { style: pptStyle, source, template: pptTemplate, render_mode: pptRenderMode });
     setNotice(result.message || "PPT 生成已提交。");
     setBusyAction("");
     await refresh({ keepForms: true });
@@ -619,6 +620,12 @@ function App() {
                           <option value="architecture">Architecture 架构图</option>
                         </select>
                       </label>
+                      <label>PPT 渲染模式
+                        <select value={pptRenderMode} onChange={(event) => setPptRenderMode(event.target.value)}>
+                          <option value="editable">可编辑 PPT 元素</option>
+                          <option value="image_slide">整页 AI 图片</option>
+                        </select>
+                      </label>
                       <label>已导入论文源
                         <select value={pptSource} onChange={(event) => setPptSource(event.target.value)}>
                           <option value="">使用 output/thesis.md</option>
@@ -772,6 +779,15 @@ function ConfigDrawer({ settings, setSettings, onClose, onSave }) {
           <label>API Base<input value={draft.api_base || ""} onChange={(event) => setField("api_base", event.target.value)} /></label>
           <label>API Key<input type="password" value={draft.api_key || ""} onChange={(event) => setField("api_key", event.target.value)} /></label>
           <label>模型<input value={draft.model || ""} onChange={(event) => setField("model", event.target.value)} /></label>
+        </div>
+
+        <div className="drawer-section">
+          <h3>PPT 图像 API</h3>
+          <label>Image API Base<input value={draft.ppt_image_api_base || ""} placeholder="https://api.openai.com/v1" onChange={(event) => setField("ppt_image_api_base", event.target.value)} /></label>
+          <label>Image API Key<input type="password" value={draft.ppt_image_api_key || ""} onChange={(event) => setField("ppt_image_api_key", event.target.value)} /></label>
+          <label>Image Model<input value={draft.ppt_image_model || ""} placeholder="gpt-image-1" onChange={(event) => setField("ppt_image_model", event.target.value)} /></label>
+          <label>Image Size<input value={draft.ppt_image_size || "1536x1024"} placeholder="1536x1024" onChange={(event) => setField("ppt_image_size", event.target.value)} /></label>
+          <p className="drawer-note">仅在 PPT 渲染模式选择“整页 AI 图片”时使用。</p>
         </div>
 
         <div className="drawer-section">

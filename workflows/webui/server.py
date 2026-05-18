@@ -187,7 +187,7 @@ def parse_ppt_progress(output):
         if total_match:
             progress["active"] = True
             progress["total"] = int(total_match.group(1))
-        progress_match = re.search(r"PPT PROGRESS:\s*(\d+)/(\d+)\s*(.*)", line)
+        progress_match = re.search(r"PPT (?:PROGRESS|IMAGE):\s*(\d+)/(\d+)\s*(.*)", line)
         if progress_match:
             progress["active"] = True
             progress["done"] = int(progress_match.group(1))
@@ -256,11 +256,16 @@ def load_settings():
     generation = config.get("engines", {}).get("generation", {})
     provider = generation.get("providers", {}).get("writer", {})
     batch = generation.get("batch", {})
+    image_slide = config.get("ppt", {}).get("image_slide", {})
     return {
         "title": config.get("project", {}).get("title", ""),
         "api_base": provider.get("api_base", ""),
         "api_key": provider.get("api_key", ""),
         "model": provider.get("model", ""),
+        "ppt_image_api_base": image_slide.get("api_base", ""),
+        "ppt_image_api_key": image_slide.get("api_key", ""),
+        "ppt_image_model": image_slide.get("model", ""),
+        "ppt_image_size": image_slide.get("size", "1536x1024"),
         "granularity": generation.get("granularity", "chapter"),
         "sleep_seconds": batch.get("sleep_seconds", 3),
         "request_timeout_seconds": batch.get("request_timeout_seconds", 300),
@@ -275,11 +280,16 @@ def update_settings(values):
     providers = generation.setdefault("providers", {})
     provider = providers.setdefault("writer", {})
     batch = generation.setdefault("batch", {})
+    image_slide = config.setdefault("ppt", {}).setdefault("image_slide", {})
 
     project["title"] = values.get("title", [""])[0].strip()
     provider["api_base"] = values.get("api_base", [""])[0].strip()
     provider["api_key"] = values.get("api_key", [""])[0].strip()
     provider["model"] = values.get("model", [""])[0].strip()
+    image_slide["api_base"] = values.get("ppt_image_api_base", [""])[0].strip()
+    image_slide["api_key"] = values.get("ppt_image_api_key", [""])[0].strip()
+    image_slide["model"] = values.get("ppt_image_model", [""])[0].strip()
+    image_slide["size"] = values.get("ppt_image_size", ["1536x1024"])[0].strip() or "1536x1024"
     granularity = values.get("granularity", ["chapter"])[0]
     generation["granularity"] = granularity if granularity in {"chapter", "subsection"} else "chapter"
     batch["sleep_seconds"] = as_number(values.get("sleep_seconds", ["3"])[0], float, 3)
@@ -295,11 +305,16 @@ def update_settings_json(values):
     providers = generation.setdefault("providers", {})
     provider = providers.setdefault("writer", {})
     batch = generation.setdefault("batch", {})
+    image_slide = config.setdefault("ppt", {}).setdefault("image_slide", {})
 
     project["title"] = str(values.get("title", "")).strip()
     provider["api_base"] = str(values.get("api_base", "")).strip()
     provider["api_key"] = str(values.get("api_key", "")).strip()
     provider["model"] = str(values.get("model", "")).strip()
+    image_slide["api_base"] = str(values.get("ppt_image_api_base", "")).strip()
+    image_slide["api_key"] = str(values.get("ppt_image_api_key", "")).strip()
+    image_slide["model"] = str(values.get("ppt_image_model", "")).strip()
+    image_slide["size"] = str(values.get("ppt_image_size", "1536x1024")).strip() or "1536x1024"
     granularity = str(values.get("granularity", "chapter"))
     generation["granularity"] = granularity if granularity in {"chapter", "subsection"} else "chapter"
     batch["sleep_seconds"] = as_number(values.get("sleep_seconds", 3), float, 3)
@@ -667,9 +682,11 @@ def run_command(name):
     return ok, messages.get(name, message) if ok else message
 
 
-def run_ppt_command(style="infographic", source="", template=""):
+def run_ppt_command(style="infographic", source="", template="", render_mode="editable"):
     style = style if style in {"infographic", "excalidraw", "architecture"} else "infographic"
+    render_mode = render_mode if render_mode in {"editable", "image_slide"} else "editable"
     command = [sys.executable, "workflow.py", "ppt", "--style", style]
+    command.extend(["--render-mode", render_mode])
     if source:
         source_path = (WORK / source).resolve()
         try:
@@ -700,7 +717,8 @@ def run_ppt_command(style="infographic", source="", template=""):
         return ok, message
     source_label = source or "output/thesis.md"
     template_label = "全部参考 PPT" if template == "__all__" else (template or "默认设计")
-    return True, f"PPT 生成已启动：输入 {source_label}，参考设计 {template_label}，风格 {style}。"
+    mode_label = "整页图片" if render_mode == "image_slide" else "可编辑"
+    return True, f"PPT 生成已启动：输入 {source_label}，参考设计 {template_label}，风格 {style}，模式 {mode_label}。"
 
 
 def frontend_sources_newer_than_dist():
@@ -1107,7 +1125,8 @@ class Handler(BaseHTTPRequestHandler):
             style = str(payload.get("style", "infographic"))
             source = str(payload.get("source", "") or "")
             template = str(payload.get("template", "") or "")
-            ok, notice = run_ppt_command(style=style, source=source, template=template)
+            render_mode = str(payload.get("render_mode", "editable") or "editable")
+            ok, notice = run_ppt_command(style=style, source=source, template=template, render_mode=render_mode)
             self.send_json({"ok": ok, "message": notice, "status": status_payload()})
             return
         if path == "/api/action":

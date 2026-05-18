@@ -69,6 +69,14 @@ export_docx:
   enable_cross_reference_links: false
 
 ppt:
+  image_slide:
+    # Optional image-generation endpoint for --render-mode image_slide.
+    # If left empty, the PPT workflow reuses the writer API settings.
+    api_base: ""
+    api_key: ""
+    model: "gpt-image-1"
+    size: "1536x1024"
+    timeout_seconds: 600
   visual_skill:
     # Enable this to let the PPT workflow call an external visual skill for
     # each slide. The command receives JSON on stdin and returns JSON on stdout.

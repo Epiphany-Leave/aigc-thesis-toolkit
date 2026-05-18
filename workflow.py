@@ -210,6 +210,10 @@ def 生成PPT(参数):
     if getattr(参数, "template", None):
         for item in 参数.template:
             命令.extend(["--template", item])
+    if getattr(参数, "render_mode", None):
+        命令.extend(["--render-mode", 参数.render_mode])
+    if getattr(参数, "image_model", None):
+        命令.extend(["--image-model", 参数.image_model])
     if getattr(参数, "no_ai", False):
         命令.append("--no-ai")
     return 运行命令(命令)
@@ -346,6 +350,8 @@ def 主函数():
     PPT.add_argument("--output", help="输出 PPTX，默认 output/thesis_presentation.pptx")
     PPT.add_argument("--style", choices=["infographic", "excalidraw", "architecture"], default="infographic", help="PPT 视觉风格预设")
     PPT.add_argument("--template", action="append", help="参考 PPT 设计样本，支持多次传入 pptx；安装 LibreOffice 后可尝试 ppt")
+    PPT.add_argument("--render-mode", choices=["editable", "image_slide"], default="editable", help="PPT 渲染模式：editable 为可编辑形状，image_slide 为整页 AI 图片")
+    PPT.add_argument("--image-model", help="整页图片模式使用的图像模型，默认读取 PPT_IMAGE_MODEL 或 gpt-image-1")
     PPT.add_argument("--no-ai", action="store_true", help="不调用 API，使用本地提纲生成 PPT")
     PPT.set_defaults(func=生成PPT)
 

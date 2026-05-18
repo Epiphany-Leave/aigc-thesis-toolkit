@@ -17,3 +17,10 @@ engines:
 
 assembly:
   min_word_count: 25000
+
+ppt:
+  image_slide:
+    api_base: "https://api.openai.com/v1"
+    api_key: "你的图像 API Key"
+    model: "gpt-image-1"
+    size: "1536x1024"
