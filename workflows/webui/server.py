@@ -28,6 +28,7 @@ PAUSE_FILE = WORK / "thesis" / "pause.flag"
 OUTPUT_DOCX = WORK / "output" / "thesis.docx"
 OUTPUT_MD = WORK / "output" / "thesis.md"
 OUTPUT_PPTX = WORK / "output" / "thesis_presentation.pptx"
+PPT_GENERATOR = "workflows/ppt/generate_ppt.py"
 OUTPUT_DIR = WORK / "output"
 PPT_DIR = WORK / "output" / "ppt"
 PPT_PLAN_FILE = PPT_DIR / "plan.json"
@@ -700,7 +701,7 @@ def run_command(name):
         "outline": [sys.executable, "workflow.py", "outline", "--overwrite"],
         "plan": [sys.executable, "workflow.py", "plan", "--overwrite-state"],
         "build": [sys.executable, "workflow.py", "build"],
-        "ppt": [sys.executable, "workflow.py", "ppt"],
+        "ppt": [sys.executable, PPT_GENERATOR],
         "review": [sys.executable, "workflow.py", "review"],
         "reset": [sys.executable, "workflow.py", "reset", "--yes"],
     }
@@ -719,10 +720,8 @@ def run_command(name):
 def run_ppt_command(style="infographic", source="", template="", render_mode="editable"):
     style = style if style in {"infographic", "excalidraw", "architecture"} else "infographic"
     render_mode = render_mode if render_mode in {"editable", "image_slide"} else "editable"
-    command = [sys.executable, "workflow.py", "ppt", "--style", style]
-    command.extend(["--render-mode", render_mode])
-    if OUTPUT_PPTX.exists():
-        OUTPUT_PPTX.unlink()
+    # Launch the generator itself so Runner.stop() can terminate it directly.
+    command = [sys.executable, PPT_GENERATOR, "--style", style, "--render-mode", render_mode]
     if render_mode == "image_slide":
         config = load_config()
         image_config = config.get("ppt", {}).get("image_slide", {})
@@ -1280,7 +1279,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
                     for file in OUTPUT_DIR.rglob("*"):
-                        if file.is_file():
+                        if file.is_file() and not (file.name.startswith(".pptx-") and file.suffix == ".tmp"):
                             archive.write(file, file.relative_to(OUTPUT_DIR).as_posix())
                 self.send_attachment(zip_path, "output.zip")
             finally:

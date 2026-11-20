@@ -1309,6 +1309,18 @@ def build_presentation(plan: dict, style: str, reference_paths: list[Path] | Non
     return prs
 
 
+def save_presentation_atomically(presentation, output: Path) -> None:
+    """Replace the last good deck only after a complete save."""
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=output.parent, prefix=".pptx-", suffix=".tmp", delete=False) as handle:
+        staged = Path(handle.name)
+    try:
+        presentation.save(staged)
+        staged.replace(output)
+    finally:
+        staged.unlink(missing_ok=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", help="input thesis file: md/docx/pdf/txt. Default: output/thesis.md")
@@ -1346,8 +1358,7 @@ def main() -> int:
     else:
         prs = build_presentation(plan, args.style, reference_paths=reference_paths, config=config, reference_style=reference_style)
     output = Path(args.output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    prs.save(output)
+    save_presentation_atomically(prs, output)
     print(f"OK: pptx -> {output}")
     print(f"OK: outline -> {PPT_OUTLINE}")
     print(f"OK: preview -> {PPT_PREVIEW}")

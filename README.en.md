@@ -2,6 +2,9 @@
 
 [简体中文](README.md) | **English**
 
+> [!NOTE]
+> **Project status: retained as a record of development.** This project was built before the Codex desktop app and similar tools appeared. It was designed to tie long-form drafting, resuming, and exporting into one workflow. Codex and similar tools can now handle these tasks directly, so this standalone toolkit is no longer useful in practice and is not recommended for new projects.
+
 An AI-assisted workspace that turns reference materials, university requirements, and real experimental data into thesis outlines, chapter drafts, Word documents, and defense slides.
 
 Bring your materials and API credentials, manage the workflow in a browser, and review, edit, or resume your drafts as you go.
